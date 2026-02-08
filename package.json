@@ -1,0 +1,28 @@
+{
+  "name": "blackice-policy-router",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "OpenAI-compatible policy/router server for OpenClaw backed by Ollama",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "dev": "tsx src/server.ts"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "dependencies": {
+    "ai": "^5.0.0",
+    "express": "^4.21.2",
+    "ollama-ai-provider-v2": "1.5.2",
+    "zod": "^4.0.16"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.13.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}
