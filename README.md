@@ -8,7 +8,7 @@ OpenAI-compatible policy/router server for OpenClaw.
 
 ## Requirements
 - Node.js 18+
-- Ollama reachable at `http://192.168.1.230:11434` (or set `OLLAMA_BASE_URL`)
+- Ollama reachable at `http://<OLLAMA_HOST>:11434` (or set `OLLAMA_BASE_URL`)
 
 ## Install
 ```bash
@@ -19,7 +19,7 @@ npm run build
 ## Run
 ```bash
 PORT=3000 \
-OLLAMA_BASE_URL=http://192.168.1.230:11434 \
+OLLAMA_BASE_URL=http://<OLLAMA_HOST>:11434 \
 ACTIONS_ENABLED=true \
 LOG_LEVEL=info \
 npm start
@@ -32,6 +32,7 @@ npm run dev
 
 ## Endpoints
 - `POST /v1/chat/completions`
+- `POST /v1/debate`
 - `GET /healthz`
 
 ## Envelope Contract
@@ -65,11 +66,13 @@ Security controls:
 - path allowlist enforcement for logs
 
 ## Environment Variables
-- `OLLAMA_BASE_URL` (default: `http://192.168.1.230:11434`)
+- `OLLAMA_BASE_URL` (default: `http://localhost:11434`)
 - `PORT` (default: `3000`)
 - `ACTIONS_ENABLED` (`true`/`false`, default `true`)
 - `LOG_LEVEL` (`info`/`debug`, default `info`)
 - `ALLOWLIST_LOG_PATHS` (comma-separated absolute files or directories)
+- `DEBATE_MODEL_ALLOWLIST` (comma-separated model IDs allowed for `/v1/debate`)
+- `DEBATE_MAX_CONCURRENT` (default `1`; max active `/v1/debate` requests)
 
 ## Quick Tests
 Streaming CHAT:
@@ -111,6 +114,22 @@ curl -sS http://127.0.0.1:3000/v1/chat/completions \
   -d '{
     "model": "router/default",
     "messages": [{"role":"user","content":"{\"action\":\"tail_log\",\"input\":\"\",\"options\":{\"path\":\"/var/log/syslog\",\"lines\":50}}"}]
+  }'
+```
+
+Debate route:
+```bash
+curl -sS -i http://127.0.0.1:3000/v1/debate \
+  -H 'Content-Type: application/json' \
+  -H 'x-request-id: demo-debate-001' \
+  -d '{
+    "topic": "Should homelabs prioritize reliability over experimentation?",
+    "moderatorInstruction": "Keep arguments technical and concise.",
+    "modelA": "llama3.1:8b",
+    "modelB": "qwen2.5:14b",
+    "rounds": 3,
+    "turnsPerRound": 4,
+    "includeModeratorSummary": true
   }'
 ```
 

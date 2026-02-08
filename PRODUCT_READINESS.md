@@ -16,10 +16,12 @@ Build a single OpenAI-compatible policy/router endpoint for OpenClaw, so OpenCla
 - LLM SDK: AI SDK v5.
 - LLM provider: `ollama-ai-provider-v2` at `OLLAMA_BASE_URL`.
 - Main endpoint: `POST /v1/chat/completions`.
+- Debate endpoint: `POST /v1/debate`.
 - Health endpoint: `GET /healthz`.
 
 ### Components
 - `src/server.ts`: OpenAI-compatible endpoint, streaming/non-streaming response framing, request lifecycle logging.
+- `src/debate.ts`: multi-round model-vs-model debate orchestration with retries and safety caps.
 - `src/schema.ts`: zod request and envelope schemas.
 - `src/envelope.ts`: reliable CHAT/ACTION detection with safe fallback to CHAT.
 - `src/router.ts`: deterministic model selection logic.
@@ -128,17 +130,19 @@ Per request structured logs include:
 7. Tighten allowlists and disable unused actions.
 
 ## Environment Variables
-- `OLLAMA_BASE_URL` (default: `http://192.168.1.230:11434`)
+- `OLLAMA_BASE_URL` (default: `http://localhost:11434`)
 - `PORT` (default: `3000`)
 - `ACTIONS_ENABLED` (`true`/`false`, default: `true`)
 - `LOG_LEVEL` (`info`/`debug`, default: `info`)
 - `ALLOWLIST_LOG_PATHS` (comma-separated absolute files or directories)
+- `DEBATE_MODEL_ALLOWLIST` (comma-separated model IDs allowed for debate route)
+- `DEBATE_MAX_CONCURRENT` (default `1`; max active debate requests)
 
 ## Run
 ```bash
 npm install
 npm run build
-PORT=3000 OLLAMA_BASE_URL=http://192.168.1.230:11434 npm start
+PORT=3000 OLLAMA_BASE_URL=http://<OLLAMA_HOST>:11434 npm start
 ```
 
 ## Example curl: Streaming CHAT
@@ -190,6 +194,24 @@ curl -sS http://127.0.0.1:3000/v1/chat/completions \
     "messages": [
       {"role":"user","content":"{\"action\":\"tail_log\",\"input\":\"\",\"options\":{\"path\":\"/var/log/syslog\",\"lines\":50}}"}
     ]
+  }'
+```
+
+## Example curl: Debate (OpenClaw decides winner)
+```bash
+curl -sS http://127.0.0.1:3000/v1/debate \
+  -H 'Content-Type: application/json' \
+  -H 'x-request-id: demo-debate-001' \
+  -d '{
+    "topic": "Should homelabs prioritize reliability over experimentation?",
+    "moderatorInstruction": "Keep arguments technical and concise.",
+    "moderator_decision_mode": "openclaw_decides",
+    "modelA": "llama3.1:8b",
+    "modelB": "qwen2.5:14b",
+    "rounds": 3,
+    "turnsPerRound": 4,
+    "maxTurnChars": 1200,
+    "includeModeratorSummary": true
   }'
 ```
 

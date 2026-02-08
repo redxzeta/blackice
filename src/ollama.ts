@@ -13,7 +13,7 @@ function normalizeOllamaBaseURL(input: string): string {
   return `${trimmed}/api`;
 }
 
-const configuredBaseURL = process.env.OLLAMA_BASE_URL?.trim() || 'http://192.168.1.230:11434';
+const configuredBaseURL = process.env.OLLAMA_BASE_URL?.trim() || 'http://localhost:11434';
 const baseURL = normalizeOllamaBaseURL(configuredBaseURL);
 
 const ollama = createOllama({
