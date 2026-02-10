@@ -4,6 +4,7 @@ import { AnalyzeLogsRequestSchema } from './schema.js';
 import { collectLogs } from './logCollector.js';
 import { analyzeLogsWithOllama } from './ollamaClient.js';
 import { SYSTEM_PROMPT, buildUserPrompt, truncateLogs } from './promptTemplates.js';
+import { ensureReadOnlyAnalysisOutput } from './outputSafety.js';
 
 function errStatus(error: unknown): number {
   if (typeof error === 'object' && error !== null && 'status' in error) {
@@ -50,7 +51,16 @@ export function registerLogExplainerRoutes(app: Express): void {
         userPrompt
       });
 
-      // Requirement: return model markdown output verbatim.
+      const safety = ensureReadOnlyAnalysisOutput(analysis);
+      if (!safety.safe) {
+        res.status(502).json({
+          error: 'Model output violated read-only safety policy',
+          details: safety.reason
+        });
+        return;
+      }
+
+      // Return model markdown output verbatim only when it passes safety policy.
       res.status(200).json({ analysis });
     } catch (error: unknown) {
       const status = errStatus(error);

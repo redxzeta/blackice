@@ -1,6 +1,6 @@
 # Log Explainer Service (Unified)
 
-The Log Explainer endpoint is now part of the main server process (`src/server.ts`).
+The Log Explainer endpoint is part of the main server process (`src/server.ts`).
 
 ## Run
 
@@ -53,5 +53,10 @@ curl -sS http://127.0.0.1:3000/analyze/logs \
 - Uses only read-only collectors: `journalctl`, `docker logs`, and explicit allowlisted files.
 - No shell mode execution (`spawn` with `shell: false`).
 - Command and file output byte caps are enforced.
+- LLM output is policy-checked and blocked if it includes remediation/destructive commands.
 - No file writes, no delete operations, no remediation commands.
 - Ollama call has a request timeout.
+
+## OpenClaw
+
+See `/Users/nsuarez/projects/blackice/OPENCLAW_LOG_EXPLAINER.md` for direct OpenClaw HTTP integration details.

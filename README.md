@@ -156,6 +156,7 @@ curl -sS http://127.0.0.1:3000/analyze/logs \
 
 ## Notes
 - Full product document: `PRODUCT_READINESS.md`
+- OpenClaw Log Explainer integration: `OPENCLAW_LOG_EXPLAINER.md`
 
 ## Versioning And Tags
 - Semver release tags (creates commit + tag):
