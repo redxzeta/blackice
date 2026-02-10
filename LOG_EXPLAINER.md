@@ -1,15 +1,15 @@
-# Log Explainer Service
+# Log Explainer Service (Unified)
 
-A small read-only HTTP service for collecting logs and sending them to Ollama for structured analysis.
+The Log Explainer endpoint is now part of the main server process (`src/server.ts`).
 
 ## Run
 
 ```bash
-PORT=3001 \
+PORT=3000 \
 OLLAMA_BASE_URL=http://192.168.1.230:11434 \
 OLLAMA_MODEL=qwen2.5:14b \
 ALLOWED_LOG_FILES=/var/log/syslog,/var/log/auth.log \
-npm run start:log-explainer
+npm start
 ```
 
 ## Endpoint
@@ -30,7 +30,7 @@ Request body:
 ## Example curl request
 
 ```bash
-curl -sS http://127.0.0.1:3001/analyze/logs \
+curl -sS http://127.0.0.1:3000/analyze/logs \
   -H 'Content-Type: application/json' \
   -d '{
     "source": "journalctl",

@@ -33,6 +33,7 @@ npm run dev
 ## Endpoints
 - `POST /v1/chat/completions`
 - `POST /v1/debate`
+- `POST /analyze/logs`
 - `GET /healthz`
 
 ## Envelope Contract
@@ -67,10 +68,12 @@ Security controls:
 
 ## Environment Variables
 - `OLLAMA_BASE_URL` (default: `http://localhost:11434`)
+- `OLLAMA_MODEL` (default: `qwen2.5:14b`)
 - `PORT` (default: `3000`)
 - `ACTIONS_ENABLED` (`true`/`false`, default `true`)
 - `LOG_LEVEL` (`info`/`debug`, default `info`)
 - `ALLOWLIST_LOG_PATHS` (comma-separated absolute files or directories)
+- `ALLOWED_LOG_FILES` (comma-separated absolute files for `source: "file"` in `/analyze/logs`)
 - `DEBATE_MODEL_ALLOWLIST` (comma-separated model IDs allowed for `/v1/debate`)
 - `DEBATE_MAX_CONCURRENT` (default `1`; max active `/v1/debate` requests)
 
@@ -133,6 +136,18 @@ curl -sS -i http://127.0.0.1:3000/v1/debate \
   }'
 ```
 
+Log Explainer route:
+```bash
+curl -sS http://127.0.0.1:3000/analyze/logs \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "source": "journalctl",
+    "target": "sshd.service",
+    "hours": 6,
+    "maxLines": 300
+  }'
+```
+
 ## OpenClaw Provider Setup
 - Base URL: `http://<router-host>:3000/v1`
 - Provider type: OpenAI-compatible
@@ -141,3 +156,17 @@ curl -sS -i http://127.0.0.1:3000/v1/debate \
 
 ## Notes
 - Full product document: `PRODUCT_READINESS.md`
+
+## Versioning And Tags
+- Semver release tags (creates commit + tag):
+```bash
+npm run version:patch
+# or: npm run version:minor
+# or: npm run version:major
+git push origin main --follow-tags
+```
+- Change tags for non-release checkpoints (tag current commit only):
+```bash
+npm run tag:change
+git push origin main --tags
+```

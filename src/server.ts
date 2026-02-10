@@ -8,6 +8,7 @@ import { ChatCompletionRequestSchema, DebateRequestSchema } from './schema.js';
 import { ollamaBaseURL, runWorkerText, runWorkerTextStream } from './ollama.js';
 import { log } from './log.js';
 import { sanitizeLLMOutput } from './sanitize.js';
+import { registerLogExplainerRoutes } from './logExplainer/route.js';
 
 const app = express();
 const port = Number(process.env.PORT ?? 3000);
@@ -15,6 +16,7 @@ const maxActiveDebates = Number(process.env.DEBATE_MAX_CONCURRENT ?? 1);
 let activeDebates = 0;
 
 app.use(express.json({ limit: '1mb' }));
+registerLogExplainerRoutes(app);
 
 function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
