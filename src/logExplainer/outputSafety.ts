@@ -17,8 +17,9 @@ const FORBIDDEN_PATTERNS: RegExp[] = [
   /\bmv\b\s+\S+\s+\/(?:etc|usr|var)\//i,
   /\bcp\b\s+\S+\s+\/(?:etc|usr|var)\//i,
   /\bkill(?:all)?\b/i,
-  /\biptables\b/i,
-  /\bufw\b/i
+  // Allow plain mention of firewall tools in explanations; block mutating commands.
+  /\biptables\s+-(?:A|D|I|P|F|X|N|R|Z)\b/i,
+  /\bufw\s+(?:enable|disable|reset|allow|deny|reject|limit|delete|reload)\b/i
 ];
 
 export function ensureReadOnlyAnalysisOutput(analysis: string): { safe: true } | { safe: false; reason: string } {
