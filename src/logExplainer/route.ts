@@ -4,7 +4,7 @@ import { AnalyzeLogsRequestSchema } from './schema.js';
 import { collectLogs } from './logCollector.js';
 import { analyzeLogsWithOllama } from './ollamaClient.js';
 import { SYSTEM_PROMPT, buildUserPrompt, truncateLogs } from './promptTemplates.js';
-import { ensureReadOnlyAnalysisOutput } from './outputSafety.js';
+import { ensureReadOnlyAnalysisOutput, sanitizeReadOnlyAnalysisOutput } from './outputSafety.js';
 
 function errStatus(error: unknown): number {
   if (typeof error === 'object' && error !== null && 'status' in error) {
@@ -52,16 +52,30 @@ export function registerLogExplainerRoutes(app: Express): void {
       });
 
       const safety = ensureReadOnlyAnalysisOutput(analysis);
+      let finalAnalysis = analysis;
+
       if (!safety.safe) {
-        res.status(502).json({
-          error: 'Model output violated read-only safety policy',
-          details: safety.reason
+        const sanitized = sanitizeReadOnlyAnalysisOutput(analysis);
+        finalAnalysis = sanitized.analysis;
+
+        log.info('log_explainer_output_redacted', {
+          reason: safety.reason,
+          redacted: sanitized.redacted,
+          reasons: sanitized.reasons
+        });
+
+        res.status(200).json({
+          analysis: finalAnalysis,
+          safety: {
+            redacted: sanitized.redacted,
+            reasons: sanitized.reasons
+          }
         });
         return;
       }
 
       // Return model markdown output verbatim only when it passes safety policy.
-      res.status(200).json({ analysis });
+      res.status(200).json({ analysis: finalAnalysis });
     } catch (error: unknown) {
       const status = errStatus(error);
       const message = errMessage(error);

@@ -34,3 +34,62 @@ export function ensureReadOnlyAnalysisOutput(analysis: string): { safe: true } |
 
   return { safe: true };
 }
+
+function linePrefixForRedaction(line: string): string {
+  const match = line.match(/^(\s*(?:[-*]|\d+\.)\s*)/);
+  if (!match) {
+    return '';
+  }
+  return match[1];
+}
+
+export function sanitizeReadOnlyAnalysisOutput(analysis: string): {
+  analysis: string;
+  redacted: boolean;
+  reasons: string[];
+} {
+  const reasons = new Set<string>();
+  const lines = analysis.split('\n');
+  let inFence = false;
+  let changed = false;
+
+  const sanitizedLines = lines.map((line) => {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('```')) {
+      inFence = !inFence;
+      return line;
+    }
+
+    const matched = FORBIDDEN_PATTERNS.find((pattern) => pattern.test(line));
+    if (!matched) {
+      return line;
+    }
+
+    reasons.add(String(matched));
+    changed = true;
+
+    // Redact actionable content in code blocks, bullets, or command-like suggestions.
+    if (inFence || line.includes('`') || /^\s*(?:[-*]|\d+\.)\s+/.test(line)) {
+      return `${linePrefixForRedaction(line)}[REDACTED unsafe remediation command removed]`;
+    }
+
+    // Fallback for prose containing imperative command snippets.
+    return line.replace(matched, '[REDACTED]');
+  });
+
+  if (!changed) {
+    return { analysis, redacted: false, reasons: [] };
+  }
+
+  const safetyNote = [
+    '### Safety Note',
+    'Potentially unsafe remediation commands were removed from this analysis.',
+    ''
+  ].join('\n');
+
+  return {
+    analysis: `${safetyNote}${sanitizedLines.join('\n')}`,
+    redacted: true,
+    reasons: Array.from(reasons)
+  };
+}

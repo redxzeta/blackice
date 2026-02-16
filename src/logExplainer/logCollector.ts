@@ -1,8 +1,6 @@
 import { spawn } from 'node:child_process';
-import { createReadStream } from 'node:fs';
-import { access, constants } from 'node:fs/promises';
+import { access, constants, open as openFile } from 'node:fs/promises';
 import path from 'node:path';
-import readline from 'node:readline';
 import type { AnalyzeLogsRequest } from './schema.js';
 
 const LOG_COLLECTION_TIMEOUT_MS = Number(process.env.LOG_COLLECTION_TIMEOUT_MS ?? 15_000);
@@ -149,27 +147,39 @@ async function collectFileLogs(input: AnalyzeLogsRequest): Promise<string> {
   }
 
   await access(requestedPath, constants.R_OK);
+  // Read only from the file tail so large logs can still be analyzed safely.
+  const handle = await openFile(requestedPath, 'r');
+  try {
+    const stat = await handle.stat();
+    const chunkSize = 64 * 1024;
+    let position = stat.size;
+    let bytesCollected = 0;
+    let newlineCount = 0;
+    const chunks: Buffer[] = [];
 
-  const lines: string[] = [];
-  let totalBytes = 0;
+    while (position > 0 && bytesCollected < MAX_FILE_BYTES && newlineCount <= safeMaxLines) {
+      const toRead = Math.min(chunkSize, position);
+      position -= toRead;
 
-  const stream = createReadStream(requestedPath, { encoding: 'utf8' });
-  const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+      const buf = Buffer.allocUnsafe(toRead);
+      const { bytesRead } = await handle.read(buf, 0, toRead, position);
+      const slice = buf.subarray(0, bytesRead);
+      chunks.unshift(slice);
+      bytesCollected += bytesRead;
 
-  for await (const line of rl) {
-    totalBytes += Buffer.byteLength(line, 'utf8');
-
-    if (totalBytes > MAX_FILE_BYTES) {
-      throw buildError(413, 'file exceeds MAX_FILE_BYTES limit');
+      for (let i = 0; i < slice.length; i += 1) {
+        if (slice[i] === 0x0a) {
+          newlineCount += 1;
+        }
+      }
     }
 
-    lines.push(line);
-    if (lines.length > safeMaxLines) {
-      lines.shift();
-    }
+    const tailText = Buffer.concat(chunks).toString('utf8');
+    const lines = tailText.split(/\r?\n/);
+    return lines.slice(-safeMaxLines).join('\n');
+  } finally {
+    await handle.close();
   }
-
-  return lines.join('\n');
 }
 
 export async function collectLogs(input: AnalyzeLogsRequest): Promise<string> {
