@@ -6,7 +6,7 @@ import { DebateInputError, runDebate } from './debate.js';
 import { chooseChatModel } from './router.js';
 import { ChatCompletionRequestSchema, DebateRequestSchema } from './schema.js';
 import { ollamaBaseURL, runWorkerText, runWorkerTextStream } from './ollama.js';
-import { log } from './log.js';
+import { getLogMetrics, getRecentLogs, log } from './log.js';
 import { sanitizeLLMOutput } from './sanitize.js';
 import { registerLogExplainerRoutes } from './logExplainer/route.js';
 
@@ -379,6 +379,28 @@ app.get('/v1/debate/schema', (_req: Request, res: Response) => {
 
 app.get('/healthz', (_req: Request, res: Response) => {
   res.status(200).json({ ok: true });
+});
+
+app.get('/logs/recent', (req: Request, res: Response) => {
+  const limitRaw = String(req.query.limit ?? '100');
+  const limit = Number.parseInt(limitRaw, 10);
+  const logs = getRecentLogs(Number.isNaN(limit) ? 100 : limit);
+
+  res.status(200).json({
+    ok: true,
+    count: logs.length,
+    logs
+  });
+});
+
+app.get('/logs/metrics', (req: Request, res: Response) => {
+  const window = typeof req.query.window === 'string' ? req.query.window : undefined;
+  const metrics = getLogMetrics(window);
+
+  res.status(200).json({
+    ok: true,
+    ...metrics
+  });
 });
 
 app.listen(port, () => {
