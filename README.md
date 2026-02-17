@@ -1,10 +1,27 @@
 # BlackIce OpenClaw Policy Router
+![BlackIce Banner](assets/blackice-banner.svg)
 
 OpenAI-compatible policy/router server for OpenClaw.
 
 - OpenClaw calls this server as its only provider.
 - This server routes to local Ollama models.
 - Supports CHAT (streaming) and ACTION (non-streaming) envelopes.
+
+## Architecture
+```mermaid
+flowchart LR
+  OC["OpenClaw (CT 101)"]
+  BI["BlackIce Router + Log Explainer (CT 115)"]
+  OL["Ollama (192.168.1.230:11434)"]
+  LXC["Other LXCs (apps/services)"]
+  RF["/var/log/remote/*.log"]
+
+  OC -->|"POST /v1/chat/completions\nPOST /v1/debate\nPOST /analyze/logs"| BI
+  BI -->|"LLM generation"| OL
+  LXC -->|"rsyslog forward (TCP 514)"| BI
+  BI -->|"writes remote logs"| RF
+  BI -->|"source=file target=/var/log/remote/*.log"| RF
+```
 
 ## Requirements
 - Node.js 18+
@@ -157,6 +174,7 @@ curl -sS http://127.0.0.1:3000/analyze/logs \
 ## Notes
 - Full product document: `PRODUCT_READINESS.md`
 - OpenClaw Log Explainer integration: `OPENCLAW_LOG_EXPLAINER.md`
+- Phase 2 multi-LXC handoff: `PHASE2_LXC_LOG_EXPOSURE_HANDOFF.md`
 
 ## Versioning And Tags
 - Semver release tags (creates commit + tag):
