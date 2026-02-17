@@ -202,6 +202,7 @@ curl -sS "http://127.0.0.1:3000/version"
 ```bash
 # Implemented via .github/workflows/auto-version-on-merge.yml
 # Behavior: bump patch, commit, create v* tag, push with --follow-tags
+# Also creates a GitHub Release with generated notes
 ```
 - Semver release tags (creates commit + tag):
 ```bash

@@ -29,7 +29,16 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Bump patch version and create tag
-        run: npm version patch -m "chore(release): %s [skip ci]"
+        id: bump
+        run: |
+          npm version patch -m "chore(release): %s [skip ci]"
+          echo "tag=v$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
 
       - name: Push version commit and tag
         run: git push origin main --follow-tags
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.bump.outputs.tag }}
+          generate_release_notes: true
