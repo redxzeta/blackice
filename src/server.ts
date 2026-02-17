@@ -64,12 +64,13 @@ function buildMessageResponse(model: string, text: string) {
   };
 }
 
-async function handleChatStreaming(res: Response, modelId: string, input: string, temperature?: number, maxTokens?: number): Promise<void> {
+async function handleChatStreaming(res: Response, modelId: string, input: string, temperature?: number, maxTokens?: number, requestId?: string): Promise<void> {
   const streamResult = runWorkerTextStream({
     modelId,
     input,
     temperature,
-    maxTokens
+    maxTokens,
+    requestId
   });
 
   const id = openAICompletionId();
@@ -235,7 +236,7 @@ app.post('/v1/chat/completions', async (req: Request, res: Response) => {
     const route = chooseChatModel(body.messages);
 
     if (body.stream) {
-      await handleChatStreaming(res, route.model, envelope.raw, body.temperature, body.max_tokens);
+      await handleChatStreaming(res, route.model, envelope.raw, body.temperature, body.max_tokens, requestId);
 
       log.info('request_complete', {
         request_id: requestId,
@@ -251,7 +252,8 @@ app.post('/v1/chat/completions', async (req: Request, res: Response) => {
       modelId: route.model,
       input: envelope.raw,
       temperature: body.temperature,
-      maxTokens: body.max_tokens
+      maxTokens: body.max_tokens,
+      requestId
     });
 
     const sanitized = sanitizeLLMOutput(result.text);
