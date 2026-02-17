@@ -4,6 +4,8 @@ import {
   ANALYZE_MAX_LINES_REQUEST,
   AnalyzeLogsBatchRequestSchema,
   AnalyzeLogsBatchResponseSchema,
+  AnalyzeLogsIncrementalRequestSchema,
+  AnalyzeLogsIncrementalResponseSchema,
   AnalyzeLogsRequestSchema,
   AnalyzeLogsResponseSchema,
   AnalyzeLogsStatusResponseSchema,
@@ -13,9 +15,15 @@ import {
   LogExplainerJsonSchemas,
   type AnalyzeLogsBatchResultError,
   type AnalyzeLogsBatchResultOk,
+  type AnalyzeLogsIncrementalResponse,
   type AnalyzeLogsRequest
 } from './schema.js';
-import { collectLogs, getAllowedLogFileTargets, getLogCollectorLimits } from './logCollector.js';
+import {
+  collectFileLogsIncremental,
+  collectLogs,
+  getAllowedLogFileTargets,
+  getLogCollectorLimits
+} from './logCollector.js';
 import { analyzeLogsWithOllama, getOllamaRuntimeMetadata } from './ollamaClient.js';
 import { SYSTEM_PROMPT, buildUserPrompt, truncateLogs } from './promptTemplates.js';
 import { ensureReadOnlyAnalysisOutput, sanitizeReadOnlyAnalysisOutput } from './outputSafety.js';
@@ -47,7 +55,10 @@ type AnalysisResult = {
 
 async function analyzeOneRequest(request: AnalyzeLogsRequest): Promise<AnalysisResult> {
   const rawLogs = await collectLogs(request);
+  return analyzeFromRawLogs(request, rawLogs);
+}
 
+async function analyzeFromRawLogs(request: AnalyzeLogsRequest, rawLogs: string): Promise<AnalysisResult> {
   if (!rawLogs.trim()) {
     const err = new Error('No logs were collected for the given query') as Error & { status: number };
     err.status = 422;
@@ -120,6 +131,7 @@ export function registerLogExplainerRoutes(app: Express): void {
       'GET /analyze/logs/status',
       'GET /analyze/logs/metadata',
       'POST /analyze/logs',
+      'POST /analyze/logs/incremental',
       'POST /analyze/logs/batch'
     ];
 
@@ -149,6 +161,7 @@ export function registerLogExplainerRoutes(app: Express): void {
         'GET /analyze/logs/status',
         'GET /analyze/logs/metadata',
         'POST /analyze/logs',
+        'POST /analyze/logs/incremental',
         'POST /analyze/logs/batch'
       ],
       limits: {
@@ -186,6 +199,18 @@ export function registerLogExplainerRoutes(app: Express): void {
           },
           responseSchema: LogExplainerJsonSchemas.analyzeLogsResponse
         },
+        incremental: {
+          method: 'POST',
+          path: '/analyze/logs/incremental',
+          requestSchema: {
+            source: 'file',
+            target: 'string',
+            cursor: 'number (optional)',
+            hours: 'number (optional)',
+            maxLines: 'number (optional)'
+          },
+          responseSchema: LogExplainerJsonSchemas.analyzeLogsIncrementalResponse
+        },
         batch: {
           method: 'POST',
           path: '/analyze/logs/batch',
@@ -206,6 +231,71 @@ export function registerLogExplainerRoutes(app: Express): void {
       status,
       schemas: LogExplainerJsonSchemas
     });
+  });
+
+  app.post('/analyze/logs/incremental', async (req: Request, res: Response) => {
+    try {
+      const parsed = AnalyzeLogsIncrementalRequestSchema.safeParse(req.body);
+
+      if (!parsed.success) {
+        res.status(400).json({
+          error: 'Invalid request body',
+          details: parsed.error.issues
+        });
+        return;
+      }
+
+      const body = parsed.data;
+      const collected = await collectFileLogsIncremental({
+        target: body.target,
+        cursor: body.cursor,
+        maxLines: body.maxLines
+      });
+
+      if (!collected.logs.trim()) {
+        const noLogsOut: AnalyzeLogsIncrementalResponse = {
+          source: 'file',
+          target: body.target,
+          cursor: body.cursor,
+          fromCursor: collected.fromCursor,
+          nextCursor: collected.nextCursor,
+          rotated: collected.rotated,
+          truncatedByBytes: collected.truncatedByBytes,
+          noNewLogs: true
+        };
+        res.status(200).json(AnalyzeLogsIncrementalResponseSchema.parse(noLogsOut));
+        return;
+      }
+
+      const analyzed = await analyzeFromRawLogs(
+        {
+          source: 'file',
+          target: body.target,
+          hours: body.hours,
+          maxLines: body.maxLines
+        },
+        collected.logs
+      );
+
+      const bodyOut: AnalyzeLogsIncrementalResponse = {
+        source: 'file',
+        target: body.target,
+        cursor: body.cursor,
+        fromCursor: collected.fromCursor,
+        nextCursor: collected.nextCursor,
+        rotated: collected.rotated,
+        truncatedByBytes: collected.truncatedByBytes,
+        noNewLogs: false,
+        ...analyzed
+      };
+      res.status(200).json(AnalyzeLogsIncrementalResponseSchema.parse(bodyOut));
+    } catch (error: unknown) {
+      const status = errStatus(error);
+      const message = errMessage(error);
+
+      log.error('log_explainer_incremental_failed', { status, message });
+      res.status(status).json({ error: message });
+    }
   });
 
   app.post('/analyze/logs/batch', async (req: Request, res: Response) => {

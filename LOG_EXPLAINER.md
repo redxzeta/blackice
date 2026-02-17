@@ -15,6 +15,7 @@ npm start
 ## Endpoint
 
 `POST /analyze/logs`
+`POST /analyze/logs/incremental`
 `POST /analyze/logs/batch`
 `GET /analyze/logs/targets`
 `GET /analyze/logs/status`
@@ -54,6 +55,18 @@ curl -sS http://127.0.0.1:3000/analyze/logs/status
 
 ```bash
 curl -sS http://127.0.0.1:3000/analyze/logs/metadata
+```
+
+```bash
+curl -sS http://127.0.0.1:3000/analyze/logs/incremental \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "source": "file",
+    "target": "/var/log/remote/paperless-ngx.log",
+    "cursor": 0,
+    "hours": 6,
+    "maxLines": 300
+  }'
 ```
 
 ```bash

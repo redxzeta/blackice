@@ -157,6 +157,89 @@ export function getLogCollectorLimits(): {
   };
 }
 
+export type IncrementalFileLogsResult = {
+  logs: string;
+  fromCursor: number;
+  nextCursor: number;
+  rotated: boolean;
+  truncatedByBytes: boolean;
+};
+
+export async function collectFileLogsIncremental(input: {
+  target: string;
+  cursor: number;
+  maxLines: number;
+}): Promise<IncrementalFileLogsResult> {
+  const safeMaxLines = clampMaxLines(input.maxLines);
+  const requestedPath = path.resolve(input.target);
+  const allowed = parseAllowedFilePaths();
+
+  if (!allowed.has(requestedPath)) {
+    throw buildError(403, 'file target is not in ALLOWED_LOG_FILES');
+  }
+
+  await access(requestedPath, constants.R_OK);
+  const handle = await openFile(requestedPath, 'r');
+  try {
+    const stat = await handle.stat();
+    const size = stat.size;
+    const requestedCursor = Math.max(0, Math.floor(input.cursor));
+    let fromCursor = Math.min(requestedCursor, size);
+    let rotated = false;
+
+    // If file rotated/truncated and cursor is beyond current file size, restart at 0.
+    if (requestedCursor > size) {
+      fromCursor = 0;
+      rotated = true;
+    }
+
+    if (fromCursor >= size) {
+      return {
+        logs: '',
+        fromCursor,
+        nextCursor: fromCursor,
+        rotated,
+        truncatedByBytes: false
+      };
+    }
+
+    const availableBytes = size - fromCursor;
+    const readBytesLimit = Math.min(MAX_FILE_BYTES, availableBytes);
+    const truncatedByBytes = availableBytes > MAX_FILE_BYTES;
+    const chunkSize = 64 * 1024;
+    const chunks: Buffer[] = [];
+    let position = fromCursor;
+    let remaining = readBytesLimit;
+
+    while (remaining > 0) {
+      const toRead = Math.min(chunkSize, remaining);
+      const buf = Buffer.allocUnsafe(toRead);
+      const { bytesRead } = await handle.read(buf, 0, toRead, position);
+      if (bytesRead <= 0) {
+        break;
+      }
+      const slice = buf.subarray(0, bytesRead);
+      chunks.push(slice);
+      position += bytesRead;
+      remaining -= bytesRead;
+    }
+
+    const text = Buffer.concat(chunks).toString('utf8');
+    const lines = text.split(/\r?\n/);
+    const logs = lines.slice(-safeMaxLines).join('\n');
+
+    return {
+      logs,
+      fromCursor,
+      nextCursor: position,
+      rotated,
+      truncatedByBytes
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
 async function collectFileLogs(input: AnalyzeLogsRequest): Promise<string> {
   const safeMaxLines = clampMaxLines(input.maxLines);
   const requestedPath = path.resolve(input.target);

@@ -23,6 +23,11 @@ Bootstrap metadata endpoint:
 - URL: `http://192.168.1.130:3000/analyze/logs/metadata`
 - Purpose: Machine-readable endpoint docs and JSON response schemas for OpenClaw self-discovery.
 
+Incremental analysis endpoint:
+- Method: `POST`
+- URL: `http://192.168.1.130:3000/analyze/logs/incremental`
+- Purpose: Analyze only newly appended log data since a previous `cursor` and return `nextCursor`.
+
 Batch analysis endpoint:
 - Method: `POST`
 - URL: `http://192.168.1.130:3000/analyze/logs/batch`
@@ -75,6 +80,32 @@ Example batch request:
   "hours": 6,
   "maxLines": 300,
   "concurrency": 2
+}
+```
+
+Example incremental request:
+```json
+{
+  "source": "file",
+  "target": "/var/log/remote/paperless-ngx.log",
+  "cursor": 0,
+  "hours": 6,
+  "maxLines": 300
+}
+```
+
+Example incremental response shape:
+```json
+{
+  "source": "file",
+  "target": "/var/log/remote/paperless-ngx.log",
+  "cursor": 0,
+  "fromCursor": 0,
+  "nextCursor": 8342,
+  "rotated": false,
+  "truncatedByBytes": false,
+  "noNewLogs": false,
+  "analysis": "## Summary\n..."
 }
 ```
 
