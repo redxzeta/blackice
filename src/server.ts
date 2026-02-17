@@ -9,13 +9,19 @@ import { ollamaBaseURL, runWorkerText, runWorkerTextStream } from './ollama.js';
 import { getLogMetrics, getRecentLogs, log } from './log.js';
 import { sanitizeLLMOutput } from './sanitize.js';
 import { registerLogExplainerRoutes } from './logExplainer/route.js';
+import { getVersionInfo } from './version.js';
 
 const app = express();
 const port = Number(process.env.PORT ?? 3000);
 const maxActiveDebates = Number(process.env.DEBATE_MAX_CONCURRENT ?? 1);
 let activeDebates = 0;
+const versionInfo = getVersionInfo();
 
 app.use(express.json({ limit: '1mb' }));
+app.use((_req, res, next) => {
+  res.setHeader('x-blackice-version', versionInfo.version);
+  next();
+});
 registerLogExplainerRoutes(app);
 
 function nowSeconds(): number {
@@ -379,6 +385,13 @@ app.get('/v1/debate/schema', (_req: Request, res: Response) => {
 
 app.get('/healthz', (_req: Request, res: Response) => {
   res.status(200).json({ ok: true });
+});
+
+app.get('/version', (_req: Request, res: Response) => {
+  res.status(200).json({
+    ok: true,
+    ...versionInfo
+  });
 });
 
 app.get('/logs/recent', (req: Request, res: Response) => {
