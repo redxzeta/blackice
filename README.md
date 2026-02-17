@@ -51,6 +51,8 @@ npm run dev
 - `POST /v1/chat/completions`
 - `POST /v1/debate`
 - `POST /analyze/logs`
+- `GET /logs/recent`
+- `GET /logs/metrics`
 - `GET /healthz`
 
 ## Envelope Contract
@@ -93,6 +95,7 @@ Security controls:
 - `ALLOWED_LOG_FILES` (comma-separated absolute files for `source: "file"` in `/analyze/logs`)
 - `DEBATE_MODEL_ALLOWLIST` (comma-separated model IDs allowed for `/v1/debate`)
 - `DEBATE_MAX_CONCURRENT` (default `1`; max active `/v1/debate` requests)
+- `LOG_BUFFER_MAX_ENTRIES` (default `2000`; in-memory API log buffer size for `/logs/*`)
 
 ## Quick Tests
 Streaming CHAT:
@@ -163,6 +166,16 @@ curl -sS http://127.0.0.1:3000/analyze/logs \
     "hours": 6,
     "maxLines": 300
   }'
+```
+
+Recent API logs:
+```bash
+curl -sS "http://127.0.0.1:3000/logs/recent?limit=100"
+```
+
+API metrics (last 1 hour):
+```bash
+curl -sS "http://127.0.0.1:3000/logs/metrics?window=1h"
 ```
 
 ## OpenClaw Provider Setup
