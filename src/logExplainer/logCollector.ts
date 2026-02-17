@@ -137,6 +137,10 @@ function parseAllowedFilePaths(): Set<string> {
   );
 }
 
+export function getAllowedLogFileTargets(): string[] {
+  return Array.from(parseAllowedFilePaths()).sort((a, b) => a.localeCompare(b));
+}
+
 async function collectFileLogs(input: AnalyzeLogsRequest): Promise<string> {
   const safeMaxLines = clampMaxLines(input.maxLines);
   const requestedPath = path.resolve(input.target);

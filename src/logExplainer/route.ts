@@ -1,7 +1,7 @@
 import { type Request, type Response, type Express } from 'express';
 import { log } from '../log.js';
 import { AnalyzeLogsRequestSchema } from './schema.js';
-import { collectLogs } from './logCollector.js';
+import { collectLogs, getAllowedLogFileTargets } from './logCollector.js';
 import { analyzeLogsWithOllama } from './ollamaClient.js';
 import { SYSTEM_PROMPT, buildUserPrompt, truncateLogs } from './promptTemplates.js';
 import { ensureReadOnlyAnalysisOutput, sanitizeReadOnlyAnalysisOutput } from './outputSafety.js';
@@ -24,6 +24,11 @@ function errMessage(error: unknown): string {
 }
 
 export function registerLogExplainerRoutes(app: Express): void {
+  app.get('/analyze/logs/targets', (_req: Request, res: Response) => {
+    const targets = getAllowedLogFileTargets();
+    res.status(200).json({ targets });
+  });
+
   app.post('/analyze/logs', async (req: Request, res: Response) => {
     try {
       const parsed = AnalyzeLogsRequestSchema.safeParse(req.body);
