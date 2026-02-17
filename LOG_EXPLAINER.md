@@ -8,6 +8,9 @@ The Log Explainer endpoint is part of the main server process (`src/server.ts`).
 PORT=3000 \
 OLLAMA_BASE_URL=http://192.168.1.230:11434 \
 OLLAMA_MODEL=qwen2.5:14b \
+OLLAMA_TIMEOUT_MS=45000 \
+OLLAMA_RETRY_ATTEMPTS=2 \
+OLLAMA_RETRY_BACKOFF_MS=1000 \
 ALLOWED_LOG_FILES=/var/log/syslog,/var/log/auth.log \
 npm start
 ```

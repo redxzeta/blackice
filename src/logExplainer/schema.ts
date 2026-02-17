@@ -108,7 +108,9 @@ export const AnalyzeLogsStatusResponseSchema = z
     llm: z.object({
       baseUrl: z.string(),
       model: z.string(),
-      timeoutMs: z.number().int().positive()
+      timeoutMs: z.number().int().positive(),
+      retryAttempts: z.number().int().nonnegative(),
+      retryBackoffMs: z.number().int().positive()
     })
   })
   .strict();
