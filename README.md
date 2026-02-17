@@ -198,6 +198,11 @@ curl -sS "http://127.0.0.1:3000/version"
 - Phase 2 multi-LXC handoff: `PHASE2_LXC_LOG_EXPOSURE_HANDOFF.md`
 
 ## Versioning And Tags
+- Automatic patch release on PR merge to `main`:
+```bash
+# Implemented via .github/workflows/auto-version-on-merge.yml
+# Behavior: bump patch, commit, create v* tag, push with --follow-tags
+```
 - Semver release tags (creates commit + tag):
 ```bash
 npm run version:patch
@@ -210,3 +215,6 @@ git push origin main --follow-tags
 npm run tag:change
 git push origin main --tags
 ```
+
+Repository setting needed:
+- `Actions` must have permission to write repository contents (for push + tags).
