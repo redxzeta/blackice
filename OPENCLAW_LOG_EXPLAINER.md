@@ -13,6 +13,11 @@ Target discovery endpoint:
 - URL: `http://192.168.1.130:3000/analyze/logs/targets`
 - Purpose: Returns currently approved file targets from `ALLOWED_LOG_FILES`.
 
+Batch analysis endpoint:
+- Method: `POST`
+- URL: `http://192.168.1.130:3000/analyze/logs/batch`
+- Purpose: Analyze all approved targets (or a provided subset) in one request.
+
 ## Request Schema
 
 ```json
@@ -49,6 +54,40 @@ Example target discovery response:
   "targets": [
     "/var/log/remote/paperless-ngx.log",
     "/var/log/remote/jellyfin.log"
+  ]
+}
+```
+
+Example batch request:
+```json
+{
+  "source": "file",
+  "hours": 6,
+  "maxLines": 300,
+  "concurrency": 2
+}
+```
+
+Example batch response shape:
+```json
+{
+  "source": "file",
+  "requestedTargets": 8,
+  "analyzedTargets": 8,
+  "ok": 7,
+  "failed": 1,
+  "results": [
+    {
+      "target": "/var/log/remote/paperless-ngx.log",
+      "ok": true,
+      "analysis": "## Summary\n..."
+    },
+    {
+      "target": "/var/log/remote/docker.log",
+      "ok": false,
+      "error": "No logs were collected for the given query",
+      "status": 422
+    }
   ]
 }
 ```

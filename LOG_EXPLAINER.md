@@ -15,6 +15,7 @@ npm start
 ## Endpoint
 
 `POST /analyze/logs`
+`POST /analyze/logs/batch`
 `GET /analyze/logs/targets`
 
 Request body:
@@ -43,6 +44,17 @@ curl -sS http://127.0.0.1:3000/analyze/logs \
 
 ```bash
 curl -sS http://127.0.0.1:3000/analyze/logs/targets
+```
+
+```bash
+curl -sS http://127.0.0.1:3000/analyze/logs/batch \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "source": "file",
+    "hours": 6,
+    "maxLines": 300,
+    "concurrency": 2
+  }'
 ```
 
 ## Example JSON response
