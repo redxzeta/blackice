@@ -12,7 +12,8 @@
     "version:patch": "npm version patch -m \"chore(release): %s\"",
     "version:minor": "npm version minor -m \"chore(release): %s\"",
     "version:major": "npm version major -m \"chore(release): %s\"",
-    "tag:change": "node scripts/tag-change.mjs"
+    "tag:change": "node scripts/tag-change.mjs",
+    "format": "biome format --write src/"
   },
   "engines": {
     "node": ">=18.17"
@@ -27,6 +28,7 @@
     "@types/express": "^4.17.21",
     "@types/node": "^22.13.1",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "@biomejs/biome": "^1.8.3"
   }
 }
