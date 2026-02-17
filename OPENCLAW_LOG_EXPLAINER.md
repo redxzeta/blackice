@@ -13,6 +13,16 @@ Target discovery endpoint:
 - URL: `http://192.168.1.130:3000/analyze/logs/targets`
 - Purpose: Returns currently approved file targets from `ALLOWED_LOG_FILES`.
 
+Capability/status endpoint:
+- Method: `GET`
+- URL: `http://192.168.1.130:3000/analyze/logs/status`
+- Purpose: Returns available endpoints, limits, approved targets count/list, and LLM runtime metadata.
+
+Bootstrap metadata endpoint:
+- Method: `GET`
+- URL: `http://192.168.1.130:3000/analyze/logs/metadata`
+- Purpose: Machine-readable endpoint docs and JSON response schemas for OpenClaw self-discovery.
+
 Batch analysis endpoint:
 - Method: `POST`
 - URL: `http://192.168.1.130:3000/analyze/logs/batch`

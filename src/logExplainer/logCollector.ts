@@ -141,6 +141,22 @@ export function getAllowedLogFileTargets(): string[] {
   return Array.from(parseAllowedFilePaths()).sort((a, b) => a.localeCompare(b));
 }
 
+export function getLogCollectorLimits(): {
+  maxHours: number;
+  maxLinesCap: number;
+  maxFileBytes: number;
+  maxCommandBytes: number;
+  collectionTimeoutMs: number;
+} {
+  return {
+    maxHours: MAX_HOURS,
+    maxLinesCap: MAX_LINES_CAP,
+    maxFileBytes: MAX_FILE_BYTES,
+    maxCommandBytes: MAX_COMMAND_BYTES,
+    collectionTimeoutMs: LOG_COLLECTION_TIMEOUT_MS
+  };
+}
+
 async function collectFileLogs(input: AnalyzeLogsRequest): Promise<string> {
   const safeMaxLines = clampMaxLines(input.maxLines);
   const requestedPath = path.resolve(input.target);

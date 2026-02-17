@@ -59,3 +59,11 @@ export async function analyzeLogsWithOllama(params: { systemPrompt: string; user
     clearTimeout(timeout);
   }
 }
+
+export function getOllamaRuntimeMetadata(): { baseUrl: string; model: string; timeoutMs: number } {
+  return {
+    baseUrl: defaultBaseUrl,
+    model: defaultModel,
+    timeoutMs: OLLAMA_TIMEOUT_MS
+  };
+}

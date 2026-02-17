@@ -17,6 +17,8 @@ npm start
 `POST /analyze/logs`
 `POST /analyze/logs/batch`
 `GET /analyze/logs/targets`
+`GET /analyze/logs/status`
+`GET /analyze/logs/metadata`
 
 Request body:
 
@@ -44,6 +46,14 @@ curl -sS http://127.0.0.1:3000/analyze/logs \
 
 ```bash
 curl -sS http://127.0.0.1:3000/analyze/logs/targets
+```
+
+```bash
+curl -sS http://127.0.0.1:3000/analyze/logs/status
+```
+
+```bash
+curl -sS http://127.0.0.1:3000/analyze/logs/metadata
 ```
 
 ```bash

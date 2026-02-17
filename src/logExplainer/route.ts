@@ -1,8 +1,22 @@
 import { type Request, type Response, type Express } from 'express';
 import { log } from '../log.js';
-import { AnalyzeLogsBatchRequestSchema, AnalyzeLogsRequestSchema, type AnalyzeLogsRequest } from './schema.js';
-import { collectLogs, getAllowedLogFileTargets } from './logCollector.js';
-import { analyzeLogsWithOllama } from './ollamaClient.js';
+import {
+  ANALYZE_MAX_LINES_REQUEST,
+  AnalyzeLogsBatchRequestSchema,
+  AnalyzeLogsBatchResponseSchema,
+  AnalyzeLogsRequestSchema,
+  AnalyzeLogsResponseSchema,
+  AnalyzeLogsStatusResponseSchema,
+  AnalyzeLogsTargetsResponseSchema,
+  BATCH_CONCURRENCY_MAX,
+  BATCH_CONCURRENCY_MIN,
+  LogExplainerJsonSchemas,
+  type AnalyzeLogsBatchResultError,
+  type AnalyzeLogsBatchResultOk,
+  type AnalyzeLogsRequest
+} from './schema.js';
+import { collectLogs, getAllowedLogFileTargets, getLogCollectorLimits } from './logCollector.js';
+import { analyzeLogsWithOllama, getOllamaRuntimeMetadata } from './ollamaClient.js';
 import { SYSTEM_PROMPT, buildUserPrompt, truncateLogs } from './promptTemplates.js';
 import { ensureReadOnlyAnalysisOutput, sanitizeReadOnlyAnalysisOutput } from './outputSafety.js';
 
@@ -93,7 +107,105 @@ async function runConcurrent<T, R>(items: T[], concurrency: number, worker: (ite
 export function registerLogExplainerRoutes(app: Express): void {
   app.get('/analyze/logs/targets', (_req: Request, res: Response) => {
     const targets = getAllowedLogFileTargets();
-    res.status(200).json({ targets });
+    const body = AnalyzeLogsTargetsResponseSchema.parse({ targets });
+    res.status(200).json(body);
+  });
+
+  app.get('/analyze/logs/status', (_req: Request, res: Response) => {
+    const targets = getAllowedLogFileTargets();
+    const collectorLimits = getLogCollectorLimits();
+    const ollama = getOllamaRuntimeMetadata();
+    const endpoints = [
+      'GET /analyze/logs/targets',
+      'GET /analyze/logs/status',
+      'GET /analyze/logs/metadata',
+      'POST /analyze/logs',
+      'POST /analyze/logs/batch'
+    ];
+
+    const body = AnalyzeLogsStatusResponseSchema.parse({
+      endpoints,
+      limits: {
+        maxHours: collectorLimits.maxHours,
+        maxLinesRequest: ANALYZE_MAX_LINES_REQUEST,
+        maxLinesEffectiveCap: collectorLimits.maxLinesCap,
+        batchConcurrencyMin: BATCH_CONCURRENCY_MIN,
+        batchConcurrencyMax: BATCH_CONCURRENCY_MAX
+      },
+      targets: {
+        count: targets.length,
+        items: targets
+      },
+      llm: ollama
+    });
+
+    res.status(200).json(body);
+  });
+
+  app.get('/analyze/logs/metadata', (_req: Request, res: Response) => {
+    const status = AnalyzeLogsStatusResponseSchema.parse({
+      endpoints: [
+        'GET /analyze/logs/targets',
+        'GET /analyze/logs/status',
+        'GET /analyze/logs/metadata',
+        'POST /analyze/logs',
+        'POST /analyze/logs/batch'
+      ],
+      limits: {
+        maxHours: getLogCollectorLimits().maxHours,
+        maxLinesRequest: ANALYZE_MAX_LINES_REQUEST,
+        maxLinesEffectiveCap: getLogCollectorLimits().maxLinesCap,
+        batchConcurrencyMin: BATCH_CONCURRENCY_MIN,
+        batchConcurrencyMax: BATCH_CONCURRENCY_MAX
+      },
+      targets: {
+        count: getAllowedLogFileTargets().length,
+        items: getAllowedLogFileTargets()
+      },
+      llm: getOllamaRuntimeMetadata()
+    });
+
+    res.status(200).json({
+      name: 'blackice-log-explainer',
+      version: 1,
+      description: 'Read-only log analysis service for OpenClaw integration',
+      endpoints: {
+        targets: {
+          method: 'GET',
+          path: '/analyze/logs/targets',
+          responseSchema: LogExplainerJsonSchemas.analyzeLogsTargetsResponse
+        },
+        analyze: {
+          method: 'POST',
+          path: '/analyze/logs',
+          requestSchema: {
+            source: 'journalctl | docker | file',
+            target: 'string',
+            hours: 'number',
+            maxLines: 'number'
+          },
+          responseSchema: LogExplainerJsonSchemas.analyzeLogsResponse
+        },
+        batch: {
+          method: 'POST',
+          path: '/analyze/logs/batch',
+          requestSchema: {
+            source: 'file',
+            targets: 'string[] (optional)',
+            hours: 'number (optional)',
+            maxLines: 'number (optional)',
+            concurrency: 'number (optional)'
+          },
+          responseSchema: LogExplainerJsonSchemas.analyzeLogsBatchResponse
+        },
+        status: {
+          method: 'GET',
+          path: '/analyze/logs/status'
+        }
+      },
+      status,
+      schemas: LogExplainerJsonSchemas
+    });
   });
 
   app.post('/analyze/logs/batch', async (req: Request, res: Response) => {
@@ -132,25 +244,27 @@ export function registerLogExplainerRoutes(app: Express): void {
 
         try {
           const analyzed = await analyzeOneRequest(request);
-          return {
+          const okResult: AnalyzeLogsBatchResultOk = {
             target,
             ok: true,
             ...analyzed
           };
+          return okResult;
         } catch (error: unknown) {
-          return {
+          const errorResult: AnalyzeLogsBatchResultError = {
             target,
             ok: false,
             error: errMessage(error),
             status: errStatus(error)
           };
+          return errorResult;
         }
       });
 
       const ok = results.filter((r) => r.ok).length;
       const failed = results.length - ok;
 
-      res.status(200).json({
+      const bodyOut = AnalyzeLogsBatchResponseSchema.parse({
         source: 'file',
         requestedTargets: candidateTargets.length,
         analyzedTargets: results.length,
@@ -158,6 +272,7 @@ export function registerLogExplainerRoutes(app: Express): void {
         failed,
         results
       });
+      res.status(200).json(bodyOut);
     } catch (error: unknown) {
       const status = errStatus(error);
       const message = errMessage(error);
@@ -179,7 +294,7 @@ export function registerLogExplainerRoutes(app: Express): void {
         return;
       }
 
-      const analyzed = await analyzeOneRequest(parsed.data);
+      const analyzed = AnalyzeLogsResponseSchema.parse(await analyzeOneRequest(parsed.data));
       res.status(200).json(analyzed);
     } catch (error: unknown) {
       const status = errStatus(error);
