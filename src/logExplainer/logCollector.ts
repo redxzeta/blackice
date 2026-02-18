@@ -130,7 +130,7 @@ async function collectDockerLogs(input: AnalyzeLogsRequest): Promise<string> {
 function parseAllowedFilePaths(): Set<string> {
   return new Set(
     String(process.env.ALLOWED_LOG_FILES ?? '')
-      .split(',')
+      .trimEnd().split(',')
       .map((value) => value.trim())
       .filter(Boolean)
       .map((value) => path.resolve(value))
@@ -225,7 +225,7 @@ export async function collectFileLogsIncremental(input: {
     }
 
     const text = Buffer.concat(chunks).toString('utf8');
-    const lines = text.split(/\r?\n/);
+    const lines = text.trimEnd().split(/\r?\n/);
     const logs = lines.slice(-safeMaxLines).join('\n');
 
     return {
@@ -278,7 +278,7 @@ async function collectFileLogs(input: AnalyzeLogsRequest): Promise<string> {
     }
 
     const tailText = Buffer.concat(chunks).toString('utf8');
-    const lines = tailText.split(/\r?\n/);
+    const lines = tailText.trimEnd().split(/\r?\n/);
     return lines.slice(-safeMaxLines).join('\n');
   } finally {
     await handle.close();
