@@ -47,6 +47,8 @@ export const AnalyzeLogsTargetsResponseSchema = z
 export const AnalyzeLogsResponseSchema = z
   .object({
     analysis: z.string(),
+    no_logs: z.boolean().optional(),
+    message: z.string().optional(),
     safety: z
       .object({
         redacted: z.boolean(),
@@ -170,6 +172,8 @@ export const LogExplainerJsonSchemas = {
     required: ['analysis'],
     properties: {
       analysis: { type: 'string' },
+      no_logs: { type: 'boolean' },
+      message: { type: 'string' },
       safety: {
         type: 'object',
         required: ['redacted', 'reasons'],

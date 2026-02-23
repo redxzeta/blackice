@@ -47,18 +47,15 @@ function errMessage(error: unknown): string {
 
 type AnalysisResult = {
   analysis: string;
+  no_logs?: boolean;
+  message?: string;
   safety?: {
     redacted: boolean;
     reasons: string[];
   };
 };
 
-type NoLogsResult = {
-  no_logs: true;
-  message: string;
-};
-
-async function analyzeOneRequest(request: AnalyzeLogsRequest): Promise<AnalysisResult | { analysis: string } | NoLogsResult> {
+async function analyzeOneRequest(request: AnalyzeLogsRequest): Promise<AnalysisResult> {
   const rawLogs = await collectLogs(request);
 
   const shouldAnalyze = request.analyze !== false && request.collectOnly !== true;
@@ -70,9 +67,13 @@ async function analyzeOneRequest(request: AnalyzeLogsRequest): Promise<AnalysisR
   return analyzeFromRawLogs(request, rawLogs);
 }
 
-async function analyzeFromRawLogs(request: AnalyzeLogsRequest, rawLogs: string): Promise<AnalysisResult | NoLogsResult> {
+async function analyzeFromRawLogs(request: AnalyzeLogsRequest, rawLogs: string): Promise<AnalysisResult> {
   if (!rawLogs.trim()) {
-    return { no_logs: true, message: 'No logs were collected for the given query' };
+    return {
+      analysis: '',
+      no_logs: true,
+      message: 'No logs were collected for the given query'
+    };
   }
 
   const { text: logs, truncated } = truncateLogs(rawLogs);
@@ -420,11 +421,6 @@ export function registerLogExplainerRoutes(app: Express): void {
       }
 
       const analyzed = await analyzeOneRequest(parsed.data);
-
-      if ('no_logs' in analyzed && analyzed.no_logs) {
-        res.status(200).json(analyzed);
-        return;
-      }
 
       res.status(200).json(AnalyzeLogsResponseSchema.parse(analyzed));
     } catch (error: unknown) {
