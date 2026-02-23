@@ -10,7 +10,9 @@ export const AnalyzeLogsRequestSchema = z
     source: z.enum(['journalctl', 'docker', 'file']),
     target: z.string().min(1).max(300),
     hours: z.number().positive().max(ANALYZE_MAX_HOURS),
-    maxLines: z.number().int().positive().max(ANALYZE_MAX_LINES_REQUEST)
+    maxLines: z.number().int().positive().max(ANALYZE_MAX_LINES_REQUEST),
+    analyze: z.boolean().optional(),
+    collectOnly: z.boolean().optional()
   })
   .strict();
 
@@ -20,7 +22,9 @@ export const AnalyzeLogsBatchRequestSchema = z
     targets: z.array(z.string().min(1).max(300)).optional(),
     hours: z.number().positive().max(ANALYZE_MAX_HOURS).optional().default(6),
     maxLines: z.number().int().positive().max(ANALYZE_MAX_LINES_REQUEST).optional().default(300),
-    concurrency: z.number().int().min(BATCH_CONCURRENCY_MIN).max(BATCH_CONCURRENCY_MAX).optional().default(2)
+    concurrency: z.number().int().min(BATCH_CONCURRENCY_MIN).max(BATCH_CONCURRENCY_MAX).optional().default(2),
+    analyze: z.boolean().optional().default(true),
+    collectOnly: z.boolean().optional()
   })
   .strict();
 
@@ -56,13 +60,16 @@ export const AnalyzeLogsBatchResultOkSchema = z
   .object({
     target: z.string(),
     ok: z.literal(true),
-    analysis: z.string(),
+    analysis: z.string().optional(),
     safety: z
       .object({
         redacted: z.boolean(),
-        reasons: z.array(z.string())
+        reasons: z.array(z.string()),
       })
-      .optional()
+      .optional(),
+    no_logs: z.boolean().optional(),
+    logs: z.string().optional(),
+    message: z.string().optional()
   })
   .strict();
 
@@ -190,7 +197,7 @@ export const LogExplainerJsonSchemas = {
           oneOf: [
             {
               type: 'object',
-              required: ['target', 'ok', 'analysis'],
+              required: ['target', 'ok'],
               properties: {
                 target: { type: 'string' },
                 ok: { const: true },
@@ -203,7 +210,10 @@ export const LogExplainerJsonSchemas = {
                     reasons: { type: 'array', items: { type: 'string' } }
                   },
                   additionalProperties: false
-                }
+                },
+                no_logs: { type: 'boolean' },
+                logs: { type: 'string' },
+                message: { type: 'string' }
               },
               additionalProperties: false
             },

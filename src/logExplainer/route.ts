@@ -53,16 +53,21 @@ type AnalysisResult = {
   };
 };
 
-async function analyzeOneRequest(request: AnalyzeLogsRequest): Promise<AnalysisResult> {
+async function analyzeOneRequest(request: AnalyzeLogsRequest): Promise<AnalysisResult | { analysis: string }> {
   const rawLogs = await collectLogs(request);
-  return analyzeFromRawLogs(request, rawLogs);
+
+  const shouldAnalyze = request.analyze !== false && request.collectOnly !== true;
+
+  if (!shouldAnalyze) {
+    return { analysis: rawLogs };
+  }
+
+  return analyzeFromRawLogs(request, rawLogs) as Promise<AnalysisResult>; // analyzeFromRawLogs can return no_logs, which needs to be handled by caller
 }
 
-async function analyzeFromRawLogs(request: AnalyzeLogsRequest, rawLogs: string): Promise<AnalysisResult> {
+async function analyzeFromRawLogs(request: AnalyzeLogsRequest, rawLogs: string): Promise<AnalysisResult | { no_logs: true; message: string }> {
   if (!rawLogs.trim()) {
-    const err = new Error('No logs were collected for the given query') as Error & { status: number };
-    err.status = 422;
-    throw err;
+    return { no_logs: true, message: 'No logs were collected for the given query' };
   }
 
   const { text: logs, truncated } = truncateLogs(rawLogs);
@@ -329,17 +334,42 @@ export function registerLogExplainerRoutes(app: Express): void {
           source: 'file',
           target,
           hours: body.hours,
-          maxLines: body.maxLines
+          maxLines: body.maxLines,
+          analyze: body.analyze,
+          collectOnly: body.collectOnly
         };
 
         try {
-          const analyzed = await analyzeOneRequest(request);
-          const okResult: AnalyzeLogsBatchResultOk = {
+          const rawLogs = await collectLogs(request);
+
+          const shouldAnalyze = request.analyze !== false && request.collectOnly !== true;
+
+          if (!shouldAnalyze) {
+            return {
+              target,
+              ok: true,
+              logs: rawLogs,
+              message: rawLogs.trim() ? "Logs collected" : "No logs collected (collect-only mode)"
+            };
+          }
+
+          const analysisResult = await analyzeFromRawLogs(request, rawLogs);
+
+          if ('no_logs' in analysisResult && analysisResult.no_logs) {
+            return {
+              target,
+              ok: true,
+              no_logs: true,
+              message: analysisResult.message
+            };
+          }
+
+          return {
             target,
             ok: true,
-            ...analyzed
-          };
-          return okResult;
+            ...analysisResult
+          } as AnalyzeLogsBatchResultOk;
+
         } catch (error: unknown) {
           const errorResult: AnalyzeLogsBatchResultError = {
             target,
