@@ -53,7 +53,12 @@ type AnalysisResult = {
   };
 };
 
-async function analyzeOneRequest(request: AnalyzeLogsRequest): Promise<AnalysisResult | { analysis: string }> {
+type NoLogsResult = {
+  no_logs: true;
+  message: string;
+};
+
+async function analyzeOneRequest(request: AnalyzeLogsRequest): Promise<AnalysisResult | { analysis: string } | NoLogsResult> {
   const rawLogs = await collectLogs(request);
 
   const shouldAnalyze = request.analyze !== false && request.collectOnly !== true;
@@ -62,10 +67,10 @@ async function analyzeOneRequest(request: AnalyzeLogsRequest): Promise<AnalysisR
     return { analysis: rawLogs };
   }
 
-  return analyzeFromRawLogs(request, rawLogs) as Promise<AnalysisResult>; // analyzeFromRawLogs can return no_logs, which needs to be handled by caller
+  return analyzeFromRawLogs(request, rawLogs);
 }
 
-async function analyzeFromRawLogs(request: AnalyzeLogsRequest, rawLogs: string): Promise<AnalysisResult | { no_logs: true; message: string }> {
+async function analyzeFromRawLogs(request: AnalyzeLogsRequest, rawLogs: string): Promise<AnalysisResult | NoLogsResult> {
   if (!rawLogs.trim()) {
     return { no_logs: true, message: 'No logs were collected for the given query' };
   }
@@ -414,8 +419,14 @@ export function registerLogExplainerRoutes(app: Express): void {
         return;
       }
 
-      const analyzed = AnalyzeLogsResponseSchema.parse(await analyzeOneRequest(parsed.data));
-      res.status(200).json(analyzed);
+      const analyzed = await analyzeOneRequest(parsed.data);
+
+      if ('no_logs' in analyzed && analyzed.no_logs) {
+        res.status(200).json(analyzed);
+        return;
+      }
+
+      res.status(200).json(AnalyzeLogsResponseSchema.parse(analyzed));
     } catch (error: unknown) {
       const status = errStatus(error);
       const message = errMessage(error);
