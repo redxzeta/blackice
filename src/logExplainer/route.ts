@@ -47,6 +47,8 @@ function errMessage(error: unknown): string {
 
 type AnalysisResult = {
   analysis: string;
+  no_logs?: boolean;
+  message?: string;
   safety?: {
     redacted: boolean;
     reasons: string[];
@@ -55,14 +57,23 @@ type AnalysisResult = {
 
 async function analyzeOneRequest(request: AnalyzeLogsRequest): Promise<AnalysisResult> {
   const rawLogs = await collectLogs(request);
+
+  const shouldAnalyze = request.analyze !== false && request.collectOnly !== true;
+
+  if (!shouldAnalyze) {
+    return { analysis: rawLogs };
+  }
+
   return analyzeFromRawLogs(request, rawLogs);
 }
 
 async function analyzeFromRawLogs(request: AnalyzeLogsRequest, rawLogs: string): Promise<AnalysisResult> {
   if (!rawLogs.trim()) {
-    const err = new Error('No logs were collected for the given query') as Error & { status: number };
-    err.status = 422;
-    throw err;
+    return {
+      analysis: '',
+      no_logs: true,
+      message: 'No logs were collected for the given query'
+    };
   }
 
   const { text: logs, truncated } = truncateLogs(rawLogs);
@@ -329,17 +340,42 @@ export function registerLogExplainerRoutes(app: Express): void {
           source: 'file',
           target,
           hours: body.hours,
-          maxLines: body.maxLines
+          maxLines: body.maxLines,
+          analyze: body.analyze,
+          collectOnly: body.collectOnly
         };
 
         try {
-          const analyzed = await analyzeOneRequest(request);
-          const okResult: AnalyzeLogsBatchResultOk = {
+          const rawLogs = await collectLogs(request);
+
+          const shouldAnalyze = request.analyze !== false && request.collectOnly !== true;
+
+          if (!shouldAnalyze) {
+            return {
+              target,
+              ok: true,
+              logs: rawLogs,
+              message: rawLogs.trim() ? "Logs collected" : "No logs collected (collect-only mode)"
+            };
+          }
+
+          const analysisResult = await analyzeFromRawLogs(request, rawLogs);
+
+          if ('no_logs' in analysisResult && analysisResult.no_logs) {
+            return {
+              target,
+              ok: true,
+              no_logs: true,
+              message: analysisResult.message
+            };
+          }
+
+          return {
             target,
             ok: true,
-            ...analyzed
-          };
-          return okResult;
+            ...analysisResult
+          } as AnalyzeLogsBatchResultOk;
+
         } catch (error: unknown) {
           const errorResult: AnalyzeLogsBatchResultError = {
             target,
@@ -384,8 +420,9 @@ export function registerLogExplainerRoutes(app: Express): void {
         return;
       }
 
-      const analyzed = AnalyzeLogsResponseSchema.parse(await analyzeOneRequest(parsed.data));
-      res.status(200).json(analyzed);
+      const analyzed = await analyzeOneRequest(parsed.data);
+
+      res.status(200).json(AnalyzeLogsResponseSchema.parse(analyzed));
     } catch (error: unknown) {
       const status = errStatus(error);
       const message = errMessage(error);
