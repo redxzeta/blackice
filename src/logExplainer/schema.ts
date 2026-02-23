@@ -7,7 +7,7 @@ export const BATCH_CONCURRENCY_MAX = 5;
 
 export const AnalyzeLogsRequestSchema = z
   .object({
-    source: z.enum(['journalctl', 'docker', 'file']),
+    source: z.enum(['journalctl', 'journald', 'docker', 'file']),
     target: z.string().min(1).max(300),
     hours: z.number().positive().max(ANALYZE_MAX_HOURS),
     maxLines: z.number().int().positive().max(ANALYZE_MAX_LINES_REQUEST),
@@ -18,7 +18,7 @@ export const AnalyzeLogsRequestSchema = z
 
 export const AnalyzeLogsBatchRequestSchema = z
   .object({
-    source: z.literal('file').optional().default('file'),
+    source: z.enum(['file', 'journald']).optional().default('file'),
     targets: z.array(z.string().min(1).max(300)).optional(),
     hours: z.number().positive().max(ANALYZE_MAX_HOURS).optional().default(6),
     maxLines: z.number().int().positive().max(ANALYZE_MAX_LINES_REQUEST).optional().default(300),
@@ -91,7 +91,7 @@ export const AnalyzeLogsBatchResultSchema = z.discriminatedUnion('ok', [
 
 export const AnalyzeLogsBatchResponseSchema = z
   .object({
-    source: z.literal('file'),
+    source: z.enum(['file', 'journald']),
     requestedTargets: z.number().int().nonnegative(),
     analyzedTargets: z.number().int().nonnegative(),
     ok: z.number().int().nonnegative(),
@@ -190,7 +190,7 @@ export const LogExplainerJsonSchemas = {
     type: 'object',
     required: ['source', 'requestedTargets', 'analyzedTargets', 'ok', 'failed', 'results'],
     properties: {
-      source: { const: 'file' },
+      source: { enum: ['file', 'journald'] },
       requestedTargets: { type: 'integer', minimum: 0 },
       analyzedTargets: { type: 'integer', minimum: 0 },
       ok: { type: 'integer', minimum: 0 },
