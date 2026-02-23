@@ -286,7 +286,7 @@ async function collectFileLogs(input: AnalyzeLogsRequest): Promise<string> {
 }
 
 export async function collectLogs(input: AnalyzeLogsRequest): Promise<string> {
-  if (input.source === 'journalctl') {
+  if (input.source === 'journalctl' || input.source === 'journald') {
     return collectJournalctlLogs(input);
   }
 

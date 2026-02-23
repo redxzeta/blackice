@@ -203,7 +203,7 @@ export function registerLogExplainerRoutes(app: Express): void {
           method: 'POST',
           path: '/analyze/logs',
           requestSchema: {
-            source: 'journalctl | docker | file',
+            source: 'journalctl | journald | docker | file',
             target: 'string',
             hours: 'number',
             maxLines: 'number'
@@ -226,8 +226,8 @@ export function registerLogExplainerRoutes(app: Express): void {
           method: 'POST',
           path: '/analyze/logs/batch',
           requestSchema: {
-            source: 'file',
-            targets: 'string[] (optional)',
+            source: 'file | journald',
+            targets: 'string[] (optional; file paths for file source, systemd units for journald source)',
             hours: 'number (optional)',
             maxLines: 'number (optional)',
             concurrency: 'number (optional)'
@@ -322,22 +322,32 @@ export function registerLogExplainerRoutes(app: Express): void {
       }
 
       const body = parsed.data;
-      const allowedTargets = getAllowedLogFileTargets();
-      const allowedSet = new Set(allowedTargets);
-      const candidateTargets = body.targets && body.targets.length > 0 ? body.targets : allowedTargets;
-      const targets = candidateTargets.filter((target) => allowedSet.has(target));
+      const source = body.source;
 
-      if (targets.length === 0) {
-        res.status(400).json({
-          error: 'No valid targets to analyze',
-          details: 'Provide targets listed in GET /analyze/logs/targets'
-        });
-        return;
+      let candidateTargets: string[];
+      let targets: string[];
+
+      if (source === 'file') {
+        const allowedTargets = getAllowedLogFileTargets();
+        const allowedSet = new Set(allowedTargets);
+        candidateTargets = body.targets && body.targets.length > 0 ? body.targets : allowedTargets;
+        targets = candidateTargets.filter((target) => allowedSet.has(target));
+
+        if (targets.length === 0) {
+          res.status(400).json({
+            error: 'No valid targets to analyze',
+            details: 'Provide targets listed in GET /analyze/logs/targets'
+          });
+          return;
+        }
+      } else {
+        candidateTargets = body.targets && body.targets.length > 0 ? body.targets : ['all'];
+        targets = candidateTargets;
       }
 
       const results = await runConcurrent(targets, body.concurrency, async (target) => {
         const request: AnalyzeLogsRequest = {
-          source: 'file',
+          source: source === 'journald' ? 'journalctl' : 'file',
           target,
           hours: body.hours,
           maxLines: body.maxLines,
@@ -391,7 +401,7 @@ export function registerLogExplainerRoutes(app: Express): void {
       const failed = results.length - ok;
 
       const bodyOut = AnalyzeLogsBatchResponseSchema.parse({
-        source: 'file',
+        source,
         requestedTargets: candidateTargets.length,
         analyzedTargets: results.length,
         ok,
