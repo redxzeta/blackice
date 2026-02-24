@@ -3,8 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { parseEnvelope } from './envelope.js';
 import { executeAction } from './actions.js';
 import { DebateInputError, runDebate } from './debate.js';
-import { chooseChatModel } from './router.js';
-import { ChatCompletionRequestSchema, DebateRequestSchema } from './schema.js';
+import { chooseActionModel, chooseChatModel } from './router.js';
+import { ChatCompletionRequestSchema, DebateRequestSchema, type ChatCompletionRequest } from './schema.js';
 import { ollamaBaseURL, runWorkerText, runWorkerTextStream } from './ollama.js';
 import { getLogMetrics, getRecentLogs, log } from './log.js';
 import { sanitizeLLMOutput } from './sanitize.js';
@@ -61,6 +61,84 @@ function buildMessageResponse(model: string, text: string) {
         finish_reason: 'stop'
       }
     ]
+  };
+}
+
+type ResolvedRoute =
+  | {
+      envelope: ReturnType<typeof parseEnvelope>;
+      route: {
+        kind: 'action';
+        action: string;
+        routerModel: string;
+        workerModel: string;
+        reason: string;
+      };
+    }
+  | {
+      envelope: ReturnType<typeof parseEnvelope>;
+      route: {
+        kind: 'chat';
+        workerModel: string;
+        reason: string;
+        stream: boolean;
+      };
+    };
+
+function resolveRoute(body: ChatCompletionRequest): ResolvedRoute {
+  const envelope = parseEnvelope(body.messages);
+
+  if (envelope.kind === 'action') {
+    const actionDecision = chooseActionModel(envelope.action.action);
+
+    return {
+      envelope,
+      route: {
+        kind: 'action',
+        action: envelope.action.action,
+        routerModel: `router/action/${envelope.action.action}`,
+        workerModel: actionDecision.model,
+        reason: actionDecision.reason
+      }
+    };
+  }
+
+  const chatDecision = chooseChatModel(body.messages);
+
+  return {
+    envelope,
+    route: {
+      kind: 'chat',
+      workerModel: chatDecision.model,
+      reason: chatDecision.reason,
+      stream: Boolean(body.stream)
+    }
+  };
+}
+
+function buildDryRunResponse(body: ChatCompletionRequest) {
+  const resolved = resolveRoute(body);
+
+  if (resolved.route.kind === 'action') {
+    return {
+      mode: 'dry_run',
+      execute: false,
+      envelope: {
+        kind: resolved.envelope.kind,
+        raw: resolved.envelope.raw
+      },
+      route: resolved.route
+    };
+  }
+
+  return {
+    mode: 'dry_run',
+    execute: false,
+    envelope: {
+      kind: resolved.envelope.kind,
+      raw: resolved.envelope.raw
+    },
+    route: resolved.route
   };
 }
 
@@ -216,41 +294,44 @@ app.post('/v1/chat/completions', async (req: Request, res: Response) => {
     }
 
     const body = parsed.data;
-    const envelope = parseEnvelope(body.messages);
+    const resolved = resolveRoute(body);
 
-    if (envelope.kind === 'action') {
-      const actionResult = await executeAction(envelope.action);
-      const modelUsed = `router/action/${envelope.action.action}`;
+    if (resolved.route.kind === 'action' && resolved.envelope.kind === 'action') {
+      const actionResult = await executeAction(resolved.envelope.action);
 
       log.info('request_complete', {
         request_id: requestId,
-        action: envelope.action.action,
-        model: modelUsed,
+        action: resolved.envelope.action.action,
+        model: resolved.route.routerModel,
+        route_reason: resolved.route.reason,
         latency_ms: Date.now() - started
       });
 
-      res.status(200).json(buildMessageResponse(modelUsed, actionResult.text));
+      res.status(200).json(buildMessageResponse(resolved.route.routerModel, actionResult.text));
       return;
     }
 
-    const route = chooseChatModel(body.messages);
+    if (resolved.route.kind !== 'chat' || resolved.envelope.kind !== 'chat') {
+      sendOpenAIError(res, 500, 'Route resolution mismatch', 'server_error');
+      return;
+    }
 
-    if (body.stream) {
-      await handleChatStreaming(res, route.model, envelope.raw, body.temperature, body.max_tokens, requestId);
+    if (resolved.route.stream) {
+      await handleChatStreaming(res, resolved.route.workerModel, resolved.envelope.raw, body.temperature, body.max_tokens, requestId);
 
       log.info('request_complete', {
         request_id: requestId,
         action: null,
-        model: route.model,
-        route_reason: route.reason,
+        model: resolved.route.workerModel,
+        route_reason: resolved.route.reason,
         latency_ms: Date.now() - started
       });
       return;
     }
 
     const result = await runWorkerText({
-      modelId: route.model,
-      input: envelope.raw,
+      modelId: resolved.route.workerModel,
+      input: resolved.envelope.raw,
       temperature: body.temperature,
       maxTokens: body.max_tokens,
       requestId
@@ -265,12 +346,12 @@ app.post('/v1/chat/completions', async (req: Request, res: Response) => {
     log.info('request_complete', {
       request_id: requestId,
       action: null,
-      model: route.model,
-      route_reason: route.reason,
+      model: resolved.route.workerModel,
+      route_reason: resolved.route.reason,
       latency_ms: Date.now() - started
     });
 
-    res.status(200).json(buildMessageResponse(route.model, sanitized.text));
+    res.status(200).json(buildMessageResponse(resolved.route.workerModel, sanitized.text));
   } catch (error) {
     log.error('request_failed', {
       request_id: requestId,
@@ -285,6 +366,30 @@ app.post('/v1/chat/completions', async (req: Request, res: Response) => {
       'server_error'
     );
   }
+});
+
+app.post('/v1/policy/dry-run', (req: Request, res: Response) => {
+  const started = Date.now();
+  const requestId = String(req.header('x-request-id') ?? randomUUID());
+  res.setHeader('x-request-id', requestId);
+
+  const parsed = ChatCompletionRequestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendOpenAIError(res, 400, parsed.error.message);
+    return;
+  }
+
+  const response = buildDryRunResponse(parsed.data);
+
+  log.info('policy_dry_run_complete', {
+    request_id: requestId,
+    envelope_kind: response.envelope.kind,
+    route_kind: response.route.kind,
+    route_reason: response.route.reason,
+    latency_ms: Date.now() - started
+  });
+
+  res.status(200).json(response);
 });
 
 app.post('/v1/debate', async (req: Request, res: Response) => {
