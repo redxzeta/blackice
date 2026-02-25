@@ -10,6 +10,7 @@ import { getLogMetrics, getRecentLogs, log } from './log.js';
 import { sanitizeLLMOutput } from './sanitize.js';
 import { registerLogExplainerRoutes } from './logExplainer/route.js';
 import { getVersionInfo } from './version.js';
+import { ROUTE_KIND } from './routeKind.js';
 
 const app = express();
 const port = Number(process.env.PORT ?? 3000);
@@ -68,7 +69,7 @@ type ResolvedRoute =
   | {
       envelope: ReturnType<typeof parseEnvelope>;
       route: {
-        kind: typeof ROUTE_KIND_ACTION;
+        kind: typeof ROUTE_KIND.ACTION;
         action: string;
         routerModel: string;
         workerModel: string;
@@ -78,26 +79,24 @@ type ResolvedRoute =
   | {
       envelope: ReturnType<typeof parseEnvelope>;
       route: {
-        kind: typeof ROUTE_KIND_CHAT;
+        kind: typeof ROUTE_KIND.CHAT;
         workerModel: string;
         reason: string;
         stream: boolean;
       };
     };
 
-const ROUTE_KIND_ACTION = 'action' as const;
-const ROUTE_KIND_CHAT = 'chat' as const;
 
 function resolveRoute(body: ChatCompletionRequest): ResolvedRoute {
   const envelope = parseEnvelope(body.messages);
 
-  if (envelope.kind === ROUTE_KIND_ACTION) {
+  if (envelope.kind === ROUTE_KIND.ACTION) {
     const actionDecision = chooseActionModel(envelope.action.action);
 
     return {
       envelope,
       route: {
-        kind: ROUTE_KIND_ACTION,
+        kind: ROUTE_KIND.ACTION,
         action: envelope.action.action,
         routerModel: `router/action/${envelope.action.action}`,
         workerModel: actionDecision.model,
@@ -111,7 +110,7 @@ function resolveRoute(body: ChatCompletionRequest): ResolvedRoute {
   return {
     envelope,
     route: {
-      kind: ROUTE_KIND_CHAT,
+      kind: ROUTE_KIND.CHAT,
       workerModel: chatDecision.model,
       reason: chatDecision.reason,
       stream: Boolean(body.stream)
