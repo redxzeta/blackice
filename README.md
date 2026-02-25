@@ -47,6 +47,10 @@ Dev mode:
 npm run dev
 ```
 
+## Source Layout
+- Canonical runtime source lives in `src/` (TypeScript).
+- Root-level legacy JavaScript files are compatibility shims only and should not be extended.
+
 ## Endpoints
 - `POST /v1/chat/completions`
 - `POST /v1/debate`

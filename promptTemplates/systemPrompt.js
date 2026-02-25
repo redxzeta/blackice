@@ -1,4 +1,1 @@
-export const SYSTEM_PROMPT = `You are a senior Linux infrastructure engineer acting as a log analysis assistant.
-
-[...FULL SYSTEM PROMPT FROM PREVIOUS MESSAGE...]
-`;
+throw new Error('Legacy prompts removed. Use TypeScript implementation in src/logExplainer/promptTemplates.ts.');
