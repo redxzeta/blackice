@@ -122,18 +122,6 @@ function resolveRoute(body: ChatCompletionRequest): ResolvedRoute {
 function buildDryRunResponse(body: ChatCompletionRequest) {
   const resolved = resolveRoute(body);
 
-  if (resolved.route.kind === ROUTE_KIND_ACTION) {
-    return {
-      mode: 'dry_run',
-      execute: false,
-      envelope: {
-        kind: resolved.envelope.kind,
-        raw: resolved.envelope.raw
-      },
-      route: resolved.route
-    };
-  }
-
   return {
     mode: 'dry_run',
     execute: false,
