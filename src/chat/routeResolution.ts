@@ -3,9 +3,11 @@ import { chooseActionModel, chooseChatModel } from '../router.js';
 import type { ChatCompletionRequest } from '../schema.js';
 import { ROUTE_KIND } from '../routeKind.js';
 
+type Envelope = ReturnType<typeof parseEnvelope>;
+
 export type ResolvedRoute =
   | {
-      envelope: ReturnType<typeof parseEnvelope>;
+      envelope: Envelope;
       route: {
         kind: typeof ROUTE_KIND.ACTION;
         action: string;
@@ -15,7 +17,7 @@ export type ResolvedRoute =
       };
     }
   | {
-      envelope: ReturnType<typeof parseEnvelope>;
+      envelope: Envelope;
       route: {
         kind: typeof ROUTE_KIND.CHAT;
         workerModel: string;

@@ -60,7 +60,8 @@ export async function handleChatStreaming(
     ]
   });
 
-  let gating = true;
+  const suppressionEnabled = process.env.STREAM_SUPPRESS_TOOLISH === '1';
+  let gating = suppressionEnabled;
   let preBuffer = '';
 
   for await (const part of streamResult.fullStream) {
@@ -73,7 +74,9 @@ export async function handleChatStreaming(
       continue;
     }
 
-    delta = delta.replace(/```/g, '');
+    if (suppressionEnabled) {
+      delta = delta.replace(/```/g, '');
+    }
 
     if (gating) {
       preBuffer += delta;
