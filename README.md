@@ -51,6 +51,7 @@ npm run dev
 - `POST /v1/chat/completions`
 - `POST /v1/debate`
 - `POST /analyze/logs`
+- `POST /v1/policy/dry-run`
 - `GET /logs/recent`
 - `GET /logs/metrics`
 - `GET /version`
@@ -141,6 +142,34 @@ curl -sS http://127.0.0.1:3000/v1/chat/completions \
     "model": "router/default",
     "messages": [{"role":"user","content":"{\"action\":\"tail_log\",\"input\":\"\",\"options\":{\"path\":\"/var/log/syslog\",\"lines\":50}}"}]
   }'
+```
+
+
+Policy dry-run (no model/action execution):
+```bash
+curl -sS http://127.0.0.1:3000/v1/policy/dry-run \
+  -H 'Content-Type: application/json' \
+  -H 'x-request-id: demo-dryrun-001' \
+  -d '{
+    "model": "router/default",
+    "stream": true,
+    "messages": [{"role":"user","content":"Explain RAID levels in simple terms."}]
+  }'
+```
+
+Example response shape:
+```json
+{
+  "mode": "dry_run",
+  "execute": false,
+  "envelope": {"kind": "chat", "raw": "Explain RAID levels in simple terms."},
+  "route": {
+    "kind": "chat",
+    "workerModel": "llama3.1:8b",
+    "reason": "default_general",
+    "stream": true
+  }
+}
 ```
 
 Debate route:

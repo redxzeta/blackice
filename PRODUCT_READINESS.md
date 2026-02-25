@@ -16,6 +16,7 @@ Build a single OpenAI-compatible policy/router endpoint for OpenClaw, so OpenCla
 - LLM SDK: AI SDK v5.
 - LLM provider: `ollama-ai-provider-v2` at `OLLAMA_BASE_URL`.
 - Main endpoint: `POST /v1/chat/completions`.
+- Policy simulation endpoint: `POST /v1/policy/dry-run` (classify + route explain, no execution).
 - Debate endpoint: `POST /v1/debate`.
 - Health endpoint: `GET /healthz`.
 
