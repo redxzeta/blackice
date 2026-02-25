@@ -68,7 +68,7 @@ type ResolvedRoute =
   | {
       envelope: ReturnType<typeof parseEnvelope>;
       route: {
-        kind: 'action';
+        kind: typeof ROUTE_KIND_ACTION;
         action: string;
         routerModel: string;
         workerModel: string;
@@ -78,23 +78,26 @@ type ResolvedRoute =
   | {
       envelope: ReturnType<typeof parseEnvelope>;
       route: {
-        kind: 'chat';
+        kind: typeof ROUTE_KIND_CHAT;
         workerModel: string;
         reason: string;
         stream: boolean;
       };
     };
 
+const ROUTE_KIND_ACTION = 'action' as const;
+const ROUTE_KIND_CHAT = 'chat' as const;
+
 function resolveRoute(body: ChatCompletionRequest): ResolvedRoute {
   const envelope = parseEnvelope(body.messages);
 
-  if (envelope.kind === 'action') {
+  if (envelope.kind === ROUTE_KIND_ACTION) {
     const actionDecision = chooseActionModel(envelope.action.action);
 
     return {
       envelope,
       route: {
-        kind: 'action',
+        kind: ROUTE_KIND_ACTION,
         action: envelope.action.action,
         routerModel: `router/action/${envelope.action.action}`,
         workerModel: actionDecision.model,
@@ -108,7 +111,7 @@ function resolveRoute(body: ChatCompletionRequest): ResolvedRoute {
   return {
     envelope,
     route: {
-      kind: 'chat',
+      kind: ROUTE_KIND_CHAT,
       workerModel: chatDecision.model,
       reason: chatDecision.reason,
       stream: Boolean(body.stream)
@@ -119,7 +122,7 @@ function resolveRoute(body: ChatCompletionRequest): ResolvedRoute {
 function buildDryRunResponse(body: ChatCompletionRequest) {
   const resolved = resolveRoute(body);
 
-  if (resolved.route.kind === 'action') {
+  if (resolved.route.kind === ROUTE_KIND_ACTION) {
     return {
       mode: 'dry_run',
       execute: false,
