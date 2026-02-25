@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 
-type VersionInfo = {
+export type VersionInfo = {
   name: string;
   version: string;
   gitSha: string | null;

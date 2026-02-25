@@ -1,17 +1,13 @@
 import { type Request, type Response, type Express } from 'express';
 import { log } from '../log.js';
 import {
-  ANALYZE_MAX_LINES_REQUEST,
   AnalyzeLogsBatchRequestSchema,
   AnalyzeLogsBatchResponseSchema,
   AnalyzeLogsIncrementalRequestSchema,
   AnalyzeLogsIncrementalResponseSchema,
   AnalyzeLogsRequestSchema,
   AnalyzeLogsResponseSchema,
-  AnalyzeLogsStatusResponseSchema,
   AnalyzeLogsTargetsResponseSchema,
-  BATCH_CONCURRENCY_MAX,
-  BATCH_CONCURRENCY_MIN,
   LogExplainerJsonSchemas,
   type AnalyzeLogsBatchResultError,
   type AnalyzeLogsBatchResultOk,
@@ -21,29 +17,14 @@ import {
 import {
   collectFileLogsIncremental,
   collectLogs,
-  getAllowedLogFileTargets,
-  getLogCollectorLimits
+  getAllowedLogFileTargets
 } from './logCollector.js';
-import { analyzeLogsWithOllama, getOllamaRuntimeMetadata } from './ollamaClient.js';
+import { analyzeLogsWithOllama } from './ollamaClient.js';
 import { SYSTEM_PROMPT, buildUserPrompt, truncateLogs } from './promptTemplates.js';
 import { ensureReadOnlyAnalysisOutput, sanitizeReadOnlyAnalysisOutput } from './outputSafety.js';
-
-function errStatus(error: unknown): number {
-  if (typeof error === 'object' && error !== null && 'status' in error) {
-    const status = (error as { status?: unknown }).status;
-    if (typeof status === 'number') {
-      return status;
-    }
-  }
-  return 500;
-}
-
-function errMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return String(error);
-}
+import { errMessage, toHttpError } from '../http/errors.js';
+import { parseBodyOrRespond } from '../http/validation.js';
+import { buildLogExplainerStatus } from './status.js';
 
 type AnalysisResult = {
   analysis: string;
@@ -134,60 +115,11 @@ export function registerLogExplainerRoutes(app: Express): void {
   });
 
   app.get('/analyze/logs/status', (_req: Request, res: Response) => {
-    const targets = getAllowedLogFileTargets();
-    const collectorLimits = getLogCollectorLimits();
-    const ollama = getOllamaRuntimeMetadata();
-    const endpoints = [
-      'GET /analyze/logs/targets',
-      'GET /analyze/logs/status',
-      'GET /analyze/logs/metadata',
-      'POST /analyze/logs',
-      'POST /analyze/logs/incremental',
-      'POST /analyze/logs/batch'
-    ];
-
-    const body = AnalyzeLogsStatusResponseSchema.parse({
-      endpoints,
-      limits: {
-        maxHours: collectorLimits.maxHours,
-        maxLinesRequest: ANALYZE_MAX_LINES_REQUEST,
-        maxLinesEffectiveCap: collectorLimits.maxLinesCap,
-        batchConcurrencyMin: BATCH_CONCURRENCY_MIN,
-        batchConcurrencyMax: BATCH_CONCURRENCY_MAX
-      },
-      targets: {
-        count: targets.length,
-        items: targets
-      },
-      llm: ollama
-    });
-
-    res.status(200).json(body);
+    res.status(200).json(buildLogExplainerStatus());
   });
 
   app.get('/analyze/logs/metadata', (_req: Request, res: Response) => {
-    const status = AnalyzeLogsStatusResponseSchema.parse({
-      endpoints: [
-        'GET /analyze/logs/targets',
-        'GET /analyze/logs/status',
-        'GET /analyze/logs/metadata',
-        'POST /analyze/logs',
-        'POST /analyze/logs/incremental',
-        'POST /analyze/logs/batch'
-      ],
-      limits: {
-        maxHours: getLogCollectorLimits().maxHours,
-        maxLinesRequest: ANALYZE_MAX_LINES_REQUEST,
-        maxLinesEffectiveCap: getLogCollectorLimits().maxLinesCap,
-        batchConcurrencyMin: BATCH_CONCURRENCY_MIN,
-        batchConcurrencyMax: BATCH_CONCURRENCY_MAX
-      },
-      targets: {
-        count: getAllowedLogFileTargets().length,
-        items: getAllowedLogFileTargets()
-      },
-      llm: getOllamaRuntimeMetadata()
-    });
+    const status = buildLogExplainerStatus();
 
     res.status(200).json({
       name: 'blackice-log-explainer',
@@ -246,17 +178,11 @@ export function registerLogExplainerRoutes(app: Express): void {
 
   app.post('/analyze/logs/incremental', async (req: Request, res: Response) => {
     try {
-      const parsed = AnalyzeLogsIncrementalRequestSchema.safeParse(req.body);
-
-      if (!parsed.success) {
-        res.status(400).json({
-          error: 'Invalid request body',
-          details: parsed.error.issues
-        });
+      const body = parseBodyOrRespond(AnalyzeLogsIncrementalRequestSchema, req.body, res);
+      if (!body) {
         return;
       }
 
-      const body = parsed.data;
       const collected = await collectFileLogsIncremental({
         target: body.target,
         cursor: body.cursor,
@@ -301,27 +227,19 @@ export function registerLogExplainerRoutes(app: Express): void {
       };
       res.status(200).json(AnalyzeLogsIncrementalResponseSchema.parse(bodyOut));
     } catch (error: unknown) {
-      const status = errStatus(error);
-      const message = errMessage(error);
-
-      log.error('log_explainer_incremental_failed', { status, message });
-      res.status(status).json({ error: message });
+      const httpError = toHttpError(error);
+      log.error('log_explainer_incremental_failed', { status: httpError.status, message: httpError.message });
+      res.status(httpError.status).json({ error: httpError.message });
     }
   });
 
   app.post('/analyze/logs/batch', async (req: Request, res: Response) => {
     try {
-      const parsed = AnalyzeLogsBatchRequestSchema.safeParse(req.body);
-
-      if (!parsed.success) {
-        res.status(400).json({
-          error: 'Invalid request body',
-          details: parsed.error.issues
-        });
+      const body = parseBodyOrRespond(AnalyzeLogsBatchRequestSchema, req.body, res);
+      if (!body) {
         return;
       }
 
-      const body = parsed.data;
       const source = body.source;
 
       let candidateTargets: string[];
@@ -365,7 +283,7 @@ export function registerLogExplainerRoutes(app: Express): void {
               target,
               ok: true,
               logs: rawLogs,
-              message: rawLogs.trim() ? "Logs collected" : "No logs collected (collect-only mode)"
+              message: rawLogs.trim() ? 'Logs collected' : 'No logs collected (collect-only mode)'
             };
           }
 
@@ -385,13 +303,13 @@ export function registerLogExplainerRoutes(app: Express): void {
             ok: true,
             ...analysisResult
           } as AnalyzeLogsBatchResultOk;
-
         } catch (error: unknown) {
+          const httpError = toHttpError(error);
           const errorResult: AnalyzeLogsBatchResultError = {
             target,
             ok: false,
-            error: errMessage(error),
-            status: errStatus(error)
+            error: httpError.message,
+            status: httpError.status
           };
           return errorResult;
         }
@@ -410,35 +328,25 @@ export function registerLogExplainerRoutes(app: Express): void {
       });
       res.status(200).json(bodyOut);
     } catch (error: unknown) {
-      const status = errStatus(error);
-      const message = errMessage(error);
-
-      log.error('log_explainer_batch_failed', { status, message });
-      res.status(status).json({ error: message });
+      const httpError = toHttpError(error);
+      log.error('log_explainer_batch_failed', { status: httpError.status, message: httpError.message });
+      res.status(httpError.status).json({ error: httpError.message });
     }
   });
 
   app.post('/analyze/logs', async (req: Request, res: Response) => {
     try {
-      const parsed = AnalyzeLogsRequestSchema.safeParse(req.body);
-
-      if (!parsed.success) {
-        res.status(400).json({
-          error: 'Invalid request body',
-          details: parsed.error.issues
-        });
+      const body = parseBodyOrRespond(AnalyzeLogsRequestSchema, req.body, res);
+      if (!body) {
         return;
       }
 
-      const analyzed = await analyzeOneRequest(parsed.data);
-
+      const analyzed = await analyzeOneRequest(body);
       res.status(200).json(AnalyzeLogsResponseSchema.parse(analyzed));
     } catch (error: unknown) {
-      const status = errStatus(error);
-      const message = errMessage(error);
-
-      log.error('log_explainer_failed', { status, message });
-      res.status(status).json({ error: message });
+      const httpError = toHttpError(error);
+      log.error('log_explainer_failed', { status: httpError.status, message: httpError.message });
+      res.status(httpError.status).json({ error: httpError.message });
     }
   });
 }

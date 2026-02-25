@@ -1,25 +1,22 @@
-import express from 'express';
-import { createAnalyzeLogsRouter } from './routes/analyzeLogsRoute.js';
+// Legacy compatibility shim.
+// Source of truth is now TypeScript in src/, compiled to dist/.
+import { existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 
-const app = express();
-const PORT = Number(process.env.PORT ?? 3000);
+const projectRoot = path.dirname(fileURLToPath(import.meta.url));
+const distServerPath = path.join(projectRoot, 'dist', 'server.js');
 
-app.use(express.json({ limit: '256kb' }));
-app.use('/analyze', createAnalyzeLogsRouter());
-
-app.get('/healthz', (_req, res) => {
-  res.status(200).json({ ok: true });
-});
-
-app.use((err, _req, res, _next) => {
-  const status = Number(err?.status ?? 500);
-  const message = typeof err?.message === 'string' ? err.message : 'Internal server error';
-
-  res.status(status).json({
-    error: message
+if (!existsSync(distServerPath)) {
+  const build = spawnSync('npm', ['run', 'build'], {
+    cwd: projectRoot,
+    stdio: 'inherit',
   });
-});
 
-app.listen(PORT, () => {
-  console.log(`Log Explainer listening on http://0.0.0.0:${PORT}`);
-});
+  if (build.status !== 0 || !existsSync(distServerPath)) {
+    process.exit(build.status ?? 1);
+  }
+}
+
+await import('./dist/server.js');

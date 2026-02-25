@@ -47,6 +47,10 @@ Dev mode:
 npm run dev
 ```
 
+## Source Layout
+- Canonical runtime source lives in `src/` (TypeScript).
+- Legacy root JavaScript modules were removed; runtime code should live under `src/` only.
+
 ## Endpoints
 - `POST /v1/chat/completions`
 - `POST /v1/debate`
@@ -98,6 +102,8 @@ Security controls:
 - `DEBATE_MODEL_ALLOWLIST` (comma-separated model IDs allowed for `/v1/debate`)
 - `DEBATE_MAX_CONCURRENT` (default `1`; max active `/v1/debate` requests)
 - `LOG_BUFFER_MAX_ENTRIES` (default `2000`; in-memory API log buffer size for `/logs/*`)
+- `OPS_ENABLED` (`1` to expose `/logs/recent` and `/logs/metrics`; default disabled)
+- `STREAM_SUPPRESS_TOOLISH` (`1` to suppress tool-call-like SSE payloads; default preserves raw output)
 - `BUILD_GIT_SHA` (optional; exposed by `GET /version`)
 - `BUILD_TIME` (optional ISO timestamp; exposed by `GET /version`)
 
