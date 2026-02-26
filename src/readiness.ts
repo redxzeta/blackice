@@ -60,13 +60,17 @@ export async function checkReadiness(): Promise<ReadinessCheckResult> {
       }
     });
 
-    ollamaCheck.latencyMs = Date.now() - started;
-    ollamaCheck.status = response.status;
+    try {
+      ollamaCheck.latencyMs = Date.now() - started;
+      ollamaCheck.status = response.status;
 
-    if (!response.ok) {
-      ollamaCheck.reason = `upstream_status_${response.status}`;
-    } else {
-      ollamaCheck.ok = true;
+      if (!response.ok) {
+        ollamaCheck.reason = `upstream_status_${response.status}`;
+      } else {
+        ollamaCheck.ok = true;
+      }
+    } finally {
+      await response.body?.cancel();
     }
   } catch (error) {
     ollamaCheck.latencyMs = Date.now() - started;
