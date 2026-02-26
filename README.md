@@ -56,8 +56,8 @@ npm run dev
 - `POST /v1/debate`
 - `POST /analyze/logs`
 - `POST /v1/policy/dry-run`
-- `GET /logs/recent`
-- `GET /logs/metrics`
+- `GET /logs/recent` *(requires `OPS_ENABLED=1`)*
+- `GET /logs/metrics` *(requires `OPS_ENABLED=1`)*
 - `GET /version`
 - `GET /healthz`
 - `GET /readyz`
