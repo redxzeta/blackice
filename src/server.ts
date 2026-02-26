@@ -7,6 +7,7 @@ import { registerChatCompletionsRoute } from './routes/chatCompletions.js';
 import { registerPolicyRoutes } from './routes/policy.js';
 import { registerDebateRoutes } from './routes/debate.js';
 import { registerOpsRoutes } from './routes/ops.js';
+import { checkReadiness, readinessStrict, readinessTimeoutMs } from './readiness.js';
 
 const app = express();
 const port = Number(process.env.PORT ?? 3000);
@@ -24,6 +25,21 @@ registerChatCompletionsRoute(app);
 registerPolicyRoutes(app);
 registerDebateRoutes(app, maxActiveDebates);
 registerOpsRoutes(app, versionInfo);
+
+app.get('/healthz', (_req, res) => {
+  res.status(200).json({ ok: true });
+});
+
+app.get('/readyz', async (_req, res) => {
+  const readiness = await checkReadiness();
+  const status = readiness.ok || !readinessStrict ? 200 : 503;
+
+  res.status(status).json({
+    ...readiness,
+    strict: readinessStrict,
+    timeoutMs: readinessTimeoutMs
+  });
+});
 
 app.listen(port, () => {
   log.info('server_started', { port, ollama_base_url: ollamaBaseURL });
