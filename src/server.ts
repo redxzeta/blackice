@@ -26,10 +26,6 @@ registerPolicyRoutes(app);
 registerDebateRoutes(app, maxActiveDebates);
 registerOpsRoutes(app, versionInfo);
 
-app.get('/healthz', (_req, res) => {
-  res.status(200).json({ ok: true });
-});
-
 app.get('/readyz', async (_req, res) => {
   const readiness = await checkReadiness();
   const status = readiness.ok || !readinessStrict ? 200 : 503;
