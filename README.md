@@ -60,6 +60,7 @@ npm run dev
 - `GET /logs/metrics`
 - `GET /version`
 - `GET /healthz`
+- `GET /health/loki`
 
 ## Envelope Contract
 Latest `user` message is interpreted as:
@@ -99,6 +100,13 @@ Security controls:
 - `LOG_LEVEL` (`info`/`debug`, default `info`)
 - `ALLOWLIST_LOG_PATHS` (comma-separated absolute files or directories)
 - `ALLOWED_LOG_FILES` (comma-separated absolute files for `source: "file"` in `/analyze/logs`)
+- `LOKI_BASE_URL` (enables Loki log source for `/analyze/logs/batch` when set)
+- `ALLOWED_LOKI_SELECTORS` (newline or semicolon separated selectors, or JSON array)
+- `LOKI_TENANT_ID` (optional tenant header `X-Scope-OrgID`)
+- `LOKI_AUTH_BEARER` (optional bearer auth token for Loki)
+- `MAX_QUERY_HOURS` (max log query lookback window)
+- `MAX_LINES` (effective cap for collected lines)
+- `MAX_CONCURRENCY` (max allowed batch concurrency)
 - `DEBATE_MODEL_ALLOWLIST` (comma-separated model IDs allowed for `/v1/debate`)
 - `DEBATE_MAX_CONCURRENT` (default `1`; max active `/v1/debate` requests)
 - `LOG_BUFFER_MAX_ENTRIES` (default `2000`; in-memory API log buffer size for `/logs/*`)
@@ -202,6 +210,18 @@ curl -sS http://127.0.0.1:3000/analyze/logs \
     "source": "journalctl",
     "target": "sshd.service",
     "hours": 6,
+    "maxLines": 300
+  }'
+```
+
+Loki batch analysis route:
+```bash
+curl -sS http://127.0.0.1:3000/analyze/logs/batch \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "source": "loki",
+    "targets": ["loki:{job=\"openclaw\",host=\"uwuntu\"}"],
+    "hours": 1,
     "maxLines": 300
   }'
 ```

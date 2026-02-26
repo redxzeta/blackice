@@ -3,7 +3,10 @@ import { z } from 'zod';
 export const ANALYZE_MAX_HOURS = 168;
 export const ANALYZE_MAX_LINES_REQUEST = 5000;
 export const BATCH_CONCURRENCY_MIN = 1;
-export const BATCH_CONCURRENCY_MAX = 5;
+const ENV_MAX_CONCURRENCY = Number(process.env.MAX_CONCURRENCY ?? 5);
+export const BATCH_CONCURRENCY_MAX = Number.isFinite(ENV_MAX_CONCURRENCY) && ENV_MAX_CONCURRENCY >= BATCH_CONCURRENCY_MIN
+  ? Math.floor(ENV_MAX_CONCURRENCY)
+  : 5;
 
 export const AnalyzeLogsRequestSchema = z
   .object({
@@ -18,9 +21,11 @@ export const AnalyzeLogsRequestSchema = z
 
 export const AnalyzeLogsBatchRequestSchema = z
   .object({
-    source: z.enum(['file', 'journald']).optional().default('file'),
-    targets: z.array(z.string().min(1).max(300)).optional(),
+    source: z.enum(['file', 'journald', 'loki']).optional().default('file'),
+    targets: z.array(z.string().min(1).max(600)).optional(),
+    selectors: z.array(z.string().min(1).max(600)).optional(),
     hours: z.number().positive().max(ANALYZE_MAX_HOURS).optional().default(6),
+    sinceMinutes: z.number().int().positive().max(ANALYZE_MAX_HOURS * 60).optional(),
     maxLines: z.number().int().positive().max(ANALYZE_MAX_LINES_REQUEST).optional().default(300),
     concurrency: z.number().int().min(BATCH_CONCURRENCY_MIN).max(BATCH_CONCURRENCY_MAX).optional().default(2),
     analyze: z.boolean().optional().default(true),
@@ -91,7 +96,7 @@ export const AnalyzeLogsBatchResultSchema = z.discriminatedUnion('ok', [
 
 export const AnalyzeLogsBatchResponseSchema = z
   .object({
-    source: z.enum(['file', 'journald']),
+    source: z.enum(['file', 'journald', 'loki']),
     requestedTargets: z.number().int().nonnegative(),
     analyzedTargets: z.number().int().nonnegative(),
     ok: z.number().int().nonnegative(),
@@ -190,7 +195,7 @@ export const LogExplainerJsonSchemas = {
     type: 'object',
     required: ['source', 'requestedTargets', 'analyzedTargets', 'ok', 'failed', 'results'],
     properties: {
-      source: { enum: ['file', 'journald'] },
+      source: { enum: ['file', 'journald', 'loki'] },
       requestedTargets: { type: 'integer', minimum: 0 },
       analyzedTargets: { type: 'integer', minimum: 0 },
       ok: { type: 'integer', minimum: 0 },
