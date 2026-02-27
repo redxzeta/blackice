@@ -2,7 +2,12 @@ import type { Express, Request, Response } from 'express';
 import { checkModelAvailability } from '../ollama.js';
 
 function toErrorCode(message: string): string {
-  if (message.includes('AbortError') || message.includes('timed out')) {
+  if (
+    message.includes('AbortError')
+    || message.includes('TimeoutError')
+    || message.includes('timed out')
+    || message.includes('timeout')
+  ) {
     return 'upstream_timeout';
   }
   if (message.startsWith('ollama_tags_failed_')) {

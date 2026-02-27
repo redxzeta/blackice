@@ -16,7 +16,10 @@ function normalizeOllamaBaseURL(input: string): string {
 const configuredBaseURL = process.env.OLLAMA_BASE_URL?.trim() || 'http://localhost:11434';
 const configuredModel = process.env.OLLAMA_MODEL?.trim() || 'qwen2.5:14b';
 const baseURL = normalizeOllamaBaseURL(configuredBaseURL);
-const modelPreflightTimeoutMs = Math.max(200, Number(process.env.MODEL_PREFLIGHT_TIMEOUT_MS ?? 2000));
+const parsedPreflightTimeoutMs = Number(process.env.MODEL_PREFLIGHT_TIMEOUT_MS ?? 2000);
+const modelPreflightTimeoutMs = Number.isFinite(parsedPreflightTimeoutMs)
+  ? Math.max(200, Math.floor(parsedPreflightTimeoutMs))
+  : 2000;
 
 const ollama = createOllama({
   baseURL
