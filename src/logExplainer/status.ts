@@ -4,20 +4,21 @@ import {
   BATCH_CONCURRENCY_MAX,
   BATCH_CONCURRENCY_MIN
 } from './schema.js';
-import { getAllowedLogFileTargets, getLogCollectorLimits } from './logCollector.js';
+import { getAllowedLogFileTargets, getLogCollectorLimits, getLokiSyntheticTargets } from './logCollector.js';
 import { getOllamaRuntimeMetadata } from './ollamaClient.js';
 
 export const LOG_EXPLAINER_ENDPOINTS = [
   'GET /analyze/logs/targets',
   'GET /analyze/logs/status',
   'GET /analyze/logs/metadata',
+  'GET /health/loki',
   'POST /analyze/logs',
   'POST /analyze/logs/incremental',
   'POST /analyze/logs/batch'
 ] as const;
 
 export function buildLogExplainerStatus() {
-  const targets = getAllowedLogFileTargets();
+  const targets = [...getAllowedLogFileTargets(), ...getLokiSyntheticTargets()];
   const collectorLimits = getLogCollectorLimits();
 
   return AnalyzeLogsStatusResponseSchema.parse({
