@@ -61,6 +61,7 @@ npm run dev
 - `GET /version`
 - `GET /healthz`
 - `GET /health/loki`
+- `GET /v1/models/check`
 
 ## Envelope Contract
 Latest `user` message is interpreted as:
@@ -95,6 +96,8 @@ Security controls:
 ## Environment Variables
 - `OLLAMA_BASE_URL` (default: `http://localhost:11434`)
 - `OLLAMA_MODEL` (default: `qwen2.5:14b`)
+- `MODEL_PREFLIGHT_ON_START` (`1` to fail startup when `OLLAMA_MODEL` is missing; default `0`)
+- `MODEL_PREFLIGHT_TIMEOUT_MS` (default `2000`)
 - `PORT` (default: `3000`)
 - `ACTIONS_ENABLED` (`true`/`false`, default `true`)
 - `LOG_LEVEL` (`info`/`debug`, default `info`)
@@ -239,6 +242,12 @@ curl -sS "http://127.0.0.1:3000/logs/metrics?window=1h"
 Runtime version:
 ```bash
 curl -sS "http://127.0.0.1:3000/version"
+```
+
+Model availability check:
+```bash
+curl -sS "http://127.0.0.1:3000/v1/models/check"
+curl -sS "http://127.0.0.1:3000/v1/models/check?model=qwen2.5:14b"
 ```
 
 ## OpenClaw Provider Setup
