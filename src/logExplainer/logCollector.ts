@@ -323,13 +323,20 @@ export async function collectLokiLogs(input: {
   url.searchParams.set('query', selector);
   url.searchParams.set('start', startNs.toString());
   url.searchParams.set('end', nowNs.toString());
-  url.searchParams.set('direction', 'forward');
+  // Query newest-first so limit captures the latest incidents under high-volume streams.
+  url.searchParams.set('direction', 'backward');
   url.searchParams.set('limit', String(safeMaxLines));
 
   let response: Response;
   try {
-    response = await fetch(url, { headers: headersWithAuth() });
+    response = await fetch(url, {
+      headers: headersWithAuth(),
+      signal: AbortSignal.timeout(LOG_COLLECTION_TIMEOUT_MS)
+    });
   } catch (error: unknown) {
+    if (error instanceof DOMException && error.name === 'TimeoutError') {
+      throw buildError(504, 'loki query timed out');
+    }
     throw buildError(502, `failed to query loki: ${error instanceof Error ? error.message : 'unknown error'}`);
   }
 
