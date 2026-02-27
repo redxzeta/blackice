@@ -7,6 +7,7 @@ const ENV_MAX_CONCURRENCY = Number(process.env.MAX_CONCURRENCY ?? 5);
 export const BATCH_CONCURRENCY_MAX = Number.isFinite(ENV_MAX_CONCURRENCY) && ENV_MAX_CONCURRENCY >= BATCH_CONCURRENCY_MIN
   ? Math.floor(ENV_MAX_CONCURRENCY)
   : 5;
+const BATCH_CONCURRENCY_DEFAULT = Math.min(2, BATCH_CONCURRENCY_MAX);
 
 export const AnalyzeLogsRequestSchema = z
   .object({
@@ -27,7 +28,7 @@ export const AnalyzeLogsBatchRequestSchema = z
     hours: z.number().positive().max(ANALYZE_MAX_HOURS).optional().default(6),
     sinceMinutes: z.number().int().positive().max(ANALYZE_MAX_HOURS * 60).optional(),
     maxLines: z.number().int().positive().max(ANALYZE_MAX_LINES_REQUEST).optional().default(300),
-    concurrency: z.number().int().min(BATCH_CONCURRENCY_MIN).max(BATCH_CONCURRENCY_MAX).optional().default(2),
+    concurrency: z.number().int().min(BATCH_CONCURRENCY_MIN).max(BATCH_CONCURRENCY_MAX).optional().default(BATCH_CONCURRENCY_DEFAULT),
     analyze: z.boolean().optional().default(true),
     collectOnly: z.boolean().optional()
   })

@@ -24,7 +24,7 @@ import {
   validateAllowedLokiSelector
 } from './logCollector.js';
 import { analyzeLogsWithOllama } from './ollamaClient.js';
-import { SYSTEM_PROMPT, buildUserPrompt, truncateLogs } from './promptTemplates.js';
+import { SYSTEM_PROMPT, buildUserPrompt, truncateLogs, type AnalyzePromptRequest } from './promptTemplates.js';
 import { ensureReadOnlyAnalysisOutput, sanitizeReadOnlyAnalysisOutput } from './outputSafety.js';
 import { errMessage, toHttpError } from '../http/errors.js';
 import { parseBodyOrRespond } from '../http/validation.js';
@@ -65,7 +65,7 @@ async function analyzeOneRequest(request: AnalyzeLogsRequest): Promise<AnalysisR
   return analyzeFromRawLogs(request, rawLogs);
 }
 
-async function analyzeFromRawLogs(request: AnalyzeLogsRequest, rawLogs: string): Promise<AnalysisResult> {
+async function analyzeFromRawLogs(request: AnalyzePromptRequest, rawLogs: string): Promise<AnalysisResult> {
   if (!rawLogs.trim()) {
     return {
       analysis: '',
@@ -305,13 +305,18 @@ export function registerLogExplainerRoutes(app: Express): void {
       }
 
       const results = await runConcurrent(targets, body.concurrency, async (target) => {
-        const request: AnalyzeLogsRequest = {
-          source: source === 'journald' ? 'journalctl' : 'file',
+        const analysisRequest: AnalyzePromptRequest = {
+          source: source === 'journald' ? 'journalctl' : source,
           target,
           hours: body.hours,
           maxLines: body.maxLines,
           analyze: body.analyze,
           collectOnly: body.collectOnly
+        };
+
+        const collectorRequest: AnalyzeLogsRequest = {
+          ...analysisRequest,
+          source: source === 'journald' ? 'journalctl' : 'file'
         };
 
         try {
@@ -322,9 +327,9 @@ export function registerLogExplainerRoutes(app: Express): void {
                 sinceMinutes: body.sinceMinutes,
                 maxLines: body.maxLines
               })
-            : await collectLogs(request);
+            : await collectLogs(collectorRequest);
 
-          const shouldAnalyze = request.analyze !== false && request.collectOnly !== true;
+          const shouldAnalyze = analysisRequest.analyze !== false && analysisRequest.collectOnly !== true;
 
           if (!shouldAnalyze) {
             return {
@@ -335,7 +340,7 @@ export function registerLogExplainerRoutes(app: Express): void {
             };
           }
 
-          const analysisResult = await analyzeFromRawLogs(request, rawLogs);
+          const analysisResult = await analyzeFromRawLogs(analysisRequest, rawLogs);
 
           if ('no_logs' in analysisResult && analysisResult.no_logs) {
             return {

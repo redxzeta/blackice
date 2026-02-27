@@ -180,21 +180,22 @@ function parseSimpleSelector(selector: string): Map<string, string> {
   }
 
   const inner = trimmed.slice(1, -1).trim();
-  const entries = inner ? inner.split(',') : [];
   const labels = new Map<string, string>();
 
-  for (const entry of entries) {
-    const [rawKey, rawValue] = entry.split('=');
-    if (!rawKey || rawValue === undefined) {
+  if (!inner) {
+    return labels;
+  }
+
+  const pairPattern = /\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*"([^"\n\r]*)"\s*(?:,|$)/gy;
+
+  while (pairPattern.lastIndex < inner.length) {
+    const pairMatch = pairPattern.exec(inner);
+    if (!pairMatch) {
       throw buildError(400, 'selector contains invalid label pair');
     }
-    const key = rawKey.trim();
-    const valueMatch = rawValue.trim().match(/^"([^"\n\r]*)"$/);
-    if (!valueMatch) {
-      throw buildError(400, 'selector value must be a quoted string');
-    }
 
-    labels.set(key, valueMatch[1]);
+    const [, key, value] = pairMatch;
+    labels.set(key, value);
   }
 
   return labels;
