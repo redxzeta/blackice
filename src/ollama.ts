@@ -14,7 +14,12 @@ function normalizeOllamaBaseURL(input: string): string {
 }
 
 const configuredBaseURL = process.env.OLLAMA_BASE_URL?.trim() || 'http://localhost:11434';
+const configuredModel = process.env.OLLAMA_MODEL?.trim() || 'qwen2.5:14b';
 const baseURL = normalizeOllamaBaseURL(configuredBaseURL);
+const parsedPreflightTimeoutMs = Number(process.env.MODEL_PREFLIGHT_TIMEOUT_MS ?? 2000);
+const modelPreflightTimeoutMs = Number.isFinite(parsedPreflightTimeoutMs)
+  ? Math.max(200, Math.floor(parsedPreflightTimeoutMs))
+  : 2000;
 
 const ollama = createOllama({
   baseURL
@@ -81,6 +86,61 @@ export function runWorkerTextStream(params: GenerateParams) {
     maxOutputTokens: params.maxTokens,
     headers: Object.keys(headers).length > 0 ? headers : undefined
   });
+}
+
+function normalizeModelName(name: string): string {
+  return name.trim();
+}
+
+export async function checkModelAvailability(requestedModel?: string): Promise<{
+  ok: boolean;
+  model: string;
+  baseUrl: string;
+  available: boolean;
+  latencyMs: number;
+}> {
+  const model = normalizeModelName(requestedModel && requestedModel.trim() ? requestedModel : configuredModel);
+  const start = Date.now();
+
+  const response = await fetch(`${baseURL}/tags`, {
+    signal: AbortSignal.timeout(modelPreflightTimeoutMs)
+  });
+
+  if (!response.ok) {
+    throw new Error(`ollama_tags_failed_${response.status}`);
+  }
+
+  const payload = await response.json() as {
+    models?: Array<{ name?: string; model?: string }>;
+  };
+
+  const candidates = new Set<string>();
+  for (const item of payload.models ?? []) {
+    if (typeof item.name === 'string' && item.name.trim()) {
+      candidates.add(item.name.trim());
+    }
+    if (typeof item.model === 'string' && item.model.trim()) {
+      candidates.add(item.model.trim());
+    }
+  }
+
+  const available = candidates.has(model);
+
+  return {
+    ok: available,
+    model,
+    baseUrl: baseURL,
+    available,
+    latencyMs: Date.now() - start
+  };
+}
+
+export function getConfiguredModel(): string {
+  return configuredModel;
+}
+
+export function isModelPreflightEnabled(): boolean {
+  return process.env.MODEL_PREFLIGHT_ON_START === '1';
 }
 
 export { baseURL as ollamaBaseURL };
