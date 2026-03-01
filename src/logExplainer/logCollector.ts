@@ -323,8 +323,11 @@ export function buildEffectiveLokiQuery(input: AnalyzeLogsBatchLokiRequest): str
     throw buildError(400, 'source must be loki');
   }
 
+  const contains = input.contains ? ` |= "${escapeLogQLStringLiteral(input.contains)}"` : '';
+  const regex = input.regex ? ` |~ "${escapeLogQLStringLiteral(input.regex)}"` : '';
+
   if (typeof input.query === 'string' && input.query.trim().length > 0) {
-    return input.query.trim();
+    return `${input.query.trim()}${contains}${regex}`;
   }
 
   if (!input.filters) {
@@ -333,8 +336,7 @@ export function buildEffectiveLokiQuery(input: AnalyzeLogsBatchLokiRequest): str
 
   const entries = Object.entries(input.filters).sort(([a], [b]) => a.localeCompare(b));
   const selector = entries.map(([key, value]) => `${key}="${escapeLogQLLabelValue(value)}"`).join(',');
-  const contains = input.contains ? ` |= "${escapeLogQLStringLiteral(input.contains)}"` : '';
-  return `{${selector}}${contains}`;
+  return `{${selector}}${contains}${regex}`;
 }
 
 function enforceScopeGuard(input: AnalyzeLogsBatchLokiRequest, effectiveQuery: string): void {
@@ -354,12 +356,24 @@ function enforceScopeGuard(input: AnalyzeLogsBatchLokiRequest, effectiveQuery: s
 export function resolveLokiTimeRange(input: {
   start?: string;
   end?: string;
+  sinceSeconds?: number;
 }): { startNs: string; endNs: string; hours: number } {
   const now = new Date();
-  const fallbackEnd = now;
-  const fallbackStart = new Date(now.getTime() - Math.max(1, LOKI_DEFAULT_WINDOW_MINUTES) * 60 * 1000);
-  const startDate = input.start ? new Date(input.start) : fallbackStart;
-  const endDate = input.end ? new Date(input.end) : fallbackEnd;
+  let startDate: Date;
+  let endDate: Date;
+
+  if (typeof input.sinceSeconds === 'number') {
+    if (!Number.isInteger(input.sinceSeconds) || input.sinceSeconds <= 0) {
+      throw buildError(400, 'sinceSeconds must be a positive integer');
+    }
+    endDate = now;
+    startDate = new Date(now.getTime() - input.sinceSeconds * 1_000);
+  } else {
+    const fallbackEnd = now;
+    const fallbackStart = new Date(now.getTime() - Math.max(1, LOKI_DEFAULT_WINDOW_MINUTES) * 60 * 1000);
+    startDate = input.start ? new Date(input.start) : fallbackStart;
+    endDate = input.end ? new Date(input.end) : fallbackEnd;
+  }
 
   if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
     throw buildError(400, 'start/end must be valid ISO-8601 timestamps');
@@ -628,7 +642,8 @@ export async function collectLokiBatchLogs(input: AnalyzeLogsBatchLokiRequest): 
   ensureAllowlistedSelectorFromQuery(query);
   const { startNs, endNs, hours } = resolveLokiTimeRange({
     start: input.start,
-    end: input.end
+    end: input.end,
+    sinceSeconds: input.sinceSeconds
   });
   const limit = clampLokiLimit(input.limit ?? 2_000);
   const logs = await queryLokiRange({

@@ -188,8 +188,10 @@ export function registerLogExplainerRoutes(app: Express): void {
             query: 'string (optional; raw LogQL for source=loki)',
             filters: 'record<string,string> (optional; source=loki selector labels)',
             contains: 'string (optional; source=loki line filter)',
+            regex: 'string (optional; source=loki regex line filter)',
             start: 'ISO-8601 datetime (optional; source=loki)',
             end: 'ISO-8601 datetime (optional; source=loki)',
+            sinceSeconds: 'number (optional; source=loki relative window)',
             limit: 'number (optional; source=loki)',
             allowUnscoped: 'boolean (optional; source=loki)',
             hours: 'number (optional)',
@@ -288,8 +290,10 @@ export function registerLogExplainerRoutes(app: Express): void {
           query: body.query,
           filters: body.filters,
           contains: body.contains,
+          regex: body.regex,
           start: body.start,
           end: body.end,
+          sinceSeconds: body.sinceSeconds,
           limit: body.limit,
           allowUnscoped: body.allowUnscoped
         };

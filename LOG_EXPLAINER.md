@@ -111,8 +111,8 @@ curl -sS http://127.0.0.1:3000/analyze/logs/batch \
       "unit": "blackice-router.service"
     },
     "contains": "request_id=...",
-    "start": "2026-03-01T04:00:00Z",
-    "end": "2026-03-01T04:15:00Z",
+    "regex": "error|timeout",
+    "sinceSeconds": 900,
     "limit": 2000
   }'
 ```
