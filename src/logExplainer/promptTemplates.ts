@@ -1,9 +1,5 @@
 import type { AnalyzeLogsRequest } from './schema.js';
 
-export type AnalyzePromptRequest = Pick<AnalyzeLogsRequest, 'target' | 'hours' | 'maxLines' | 'analyze' | 'collectOnly'> & {
-  source: AnalyzeLogsRequest['source'] | 'loki';
-};
-
 export const SYSTEM_PROMPT = `You are a senior Linux infrastructure engineer acting as a read-only log analysis assistant.
 
 Hard safety constraints (must always follow):
@@ -26,6 +22,13 @@ Output format requirements:
 
 const MAX_LOG_CHARS = Number(process.env.MAX_LOG_CHARS ?? 40_000);
 
+type PromptRequestContext = Pick<AnalyzeLogsRequest, 'source' | 'target' | 'hours' | 'maxLines'> | {
+  source: 'loki';
+  target: string;
+  hours: number;
+  maxLines: number;
+};
+
 export function truncateLogs(input: string): { text: string; truncated: boolean } {
   if (input.length <= MAX_LOG_CHARS) {
     return { text: input, truncated: false };
@@ -38,7 +41,7 @@ export function truncateLogs(input: string): { text: string; truncated: boolean 
   };
 }
 
-export function buildUserPrompt(request: AnalyzePromptRequest & { logs: string; truncated: boolean }): string {
+export function buildUserPrompt(request: PromptRequestContext & { logs: string; truncated: boolean }): string {
   return `Analyze the following logs and produce a structured markdown report.
 
 Context:
