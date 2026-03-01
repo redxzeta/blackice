@@ -296,7 +296,7 @@ function extractSelectorExpression(query: string): string {
 function ensureAllowlistedSelectorFromQuery(query: string): void {
   const allowed = getAllowedLokiSelectors();
   if (!allowed.length) {
-    return;
+    throw buildError(503, 'loki source is enabled but ALLOWED_LOKI_SELECTORS is empty');
   }
   const selector = extractSelectorExpression(query);
   validateAllowedLokiSelector(selector);

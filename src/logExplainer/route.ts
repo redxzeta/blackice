@@ -293,31 +293,46 @@ export function registerLogExplainerRoutes(app: Express): void {
           limit: body.limit,
           allowUnscoped: body.allowUnscoped
         };
-        const collected = await collectLokiBatchLogs(lokiRequest);
-        const shouldAnalyze = body.analyze !== false && body.collectOnly !== true;
+        let fallbackTarget = 'loki';
+        if (typeof body.query === 'string' && body.query.trim().length > 0) {
+          fallbackTarget = body.query.trim();
+        }
+        let result: AnalyzeLogsBatchResultOk | AnalyzeLogsBatchResultError;
+        try {
+          const collected = await collectLokiBatchLogs(lokiRequest);
+          fallbackTarget = collected.query;
+          const shouldAnalyze = body.analyze !== false && body.collectOnly !== true;
 
-        let result: AnalyzeLogsBatchResultOk;
-        if (!shouldAnalyze) {
+          if (!shouldAnalyze) {
+            result = {
+              target: collected.query,
+              ok: true,
+              logs: collected.logs,
+              message: collected.logs.trim() ? 'Logs collected' : 'No logs collected (collect-only mode)'
+            };
+          } else {
+            const analysisRequest: AnalyzePromptRequest = {
+              source: 'loki',
+              target: collected.query,
+              hours: collected.hours,
+              maxLines: collected.limit,
+              analyze: body.analyze,
+              collectOnly: body.collectOnly
+            };
+            const analysisResult = await analyzeFromRawLogs(analysisRequest, collected.logs);
+            result = {
+              target: collected.query,
+              ok: true,
+              ...analysisResult
+            };
+          }
+        } catch (error: unknown) {
+          const httpError = toHttpError(error);
           result = {
-            target: collected.query,
-            ok: true,
-            logs: collected.logs,
-            message: collected.logs.trim() ? 'Logs collected' : 'No logs collected (collect-only mode)'
-          };
-        } else {
-          const analysisRequest: AnalyzePromptRequest = {
-            source: 'loki',
-            target: collected.query,
-            hours: collected.hours,
-            maxLines: collected.limit,
-            analyze: body.analyze,
-            collectOnly: body.collectOnly
-          };
-          const analysisResult = await analyzeFromRawLogs(analysisRequest, collected.logs);
-          result = {
-            target: collected.query,
-            ok: true,
-            ...analysisResult
+            target: fallbackTarget,
+            ok: false,
+            error: errMessage(httpError),
+            status: httpError.status
           };
         }
 
@@ -325,8 +340,8 @@ export function registerLogExplainerRoutes(app: Express): void {
           source: 'loki',
           requestedTargets: 1,
           analyzedTargets: 1,
-          ok: 1,
-          failed: 0,
+          ok: result.ok ? 1 : 0,
+          failed: result.ok ? 0 : 1,
           results: [result]
         });
         res.status(200).json(bodyOut);
