@@ -95,16 +95,6 @@ curl -sS http://127.0.0.1:3000/analyze/logs/batch \
   -H 'Content-Type: application/json' \
   -d '{
     "source": "loki",
-    "query": "{job=\"journald\",host=\"owonto\",unit=\"blackice-router.service\"} |= \"server_started\"",
-    "limit": 2000
-  }'
-```
-
-```bash
-curl -sS http://127.0.0.1:3000/analyze/logs/batch \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "source": "loki",
     "filters": {
       "job": "journald",
       "host": "owonto",
@@ -129,6 +119,7 @@ curl -sS http://127.0.0.1:3000/analyze/logs/batch \
 
 - Uses only read-only collectors: `journalctl`, `docker logs`, and explicit allowlisted files.
 - Loki source is read-only via `/loki/api/v1/query_range`.
+- Loki selectors are constructed internally from validated `filters` (raw `query` and selector strings are rejected).
 - No shell mode execution (`spawn` with `shell: false`).
 - Command and file output byte caps are enforced.
 - Loki guards: default 15-minute window, max window (default 60 minutes), max line cap, max response bytes, and scoped-label requirement (`host` or `unit`) unless `allowUnscoped: true`.

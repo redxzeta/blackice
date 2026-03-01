@@ -18,6 +18,12 @@ const LOKI_MAX_LINES_CAP = Number(process.env.LOKI_MAX_LINES_CAP ?? MAX_LINES_CA
 const LOKI_MAX_RESPONSE_BYTES = Number(process.env.LOKI_MAX_RESPONSE_BYTES ?? MAX_COMMAND_BYTES);
 const LOKI_REQUIRE_SCOPE_LABELS =
   String(process.env.LOKI_REQUIRE_SCOPE_LABELS ?? 'true').trim().toLowerCase() !== 'false';
+const ALLOWED_LOKI_JOB = String(process.env.ALLOWED_LOKI_JOB ?? '').trim();
+const ALLOWED_LOKI_LABELS = String(process.env.ALLOWED_LOKI_LABELS ?? 'job,host,unit,app,service_name').trim();
+const ALLOWED_LOKI_HOSTS = String(process.env.ALLOWED_LOKI_HOSTS ?? '').trim();
+const ALLOWED_LOKI_UNITS = String(process.env.ALLOWED_LOKI_UNITS ?? '').trim();
+const ALLOWED_LOKI_HOSTS_REGEX = String(process.env.ALLOWED_LOKI_HOSTS_REGEX ?? '').trim();
+const ALLOWED_LOKI_UNITS_REGEX = String(process.env.ALLOWED_LOKI_UNITS_REGEX ?? '').trim();
 
 type LokiStreamResult = {
   stream?: Record<string, string>;
@@ -160,27 +166,35 @@ function parseAllowedFilePaths(): Set<string> {
   );
 }
 
-function parseAllowedLokiSelectorsRaw(): string[] {
-  const raw = String(process.env.ALLOWED_LOKI_SELECTORS ?? '').trim();
+function parseCsvSet(raw: string): Set<string> {
+  return new Set(
+    raw
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean)
+  );
+}
+
+function parseOptionalRegex(raw: string): RegExp | null {
   if (!raw) {
-    return [];
+    return null;
   }
 
-  if (raw.startsWith('[')) {
-    try {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        return parsed.map((v) => String(v).trim()).filter(Boolean);
-      }
-    } catch {
-      // fall back to plain parser
-    }
+  try {
+    return new RegExp(raw);
+  } catch {
+    throw buildError(500, 'Invalid regex in Loki allowlist configuration');
   }
+}
 
-  return raw
-    .split(/\n|;/)
-    .map((value) => value.trim())
-    .filter(Boolean);
+function matchesAllowlist(value: string, list: Set<string>, regex: RegExp | null): boolean {
+  if (list.size > 0 && list.has(value)) {
+    return true;
+  }
+  if (regex && regex.test(value)) {
+    return true;
+  }
+  return false;
 }
 
 function parseSimpleSelector(selector: string): Map<string, string> {
@@ -227,13 +241,44 @@ function normalizeSelector(selector: string): string {
   return `{${ordered.map(([key, value]) => `${key}="${value}"`).join(',')}}`;
 }
 
-function isSupersetSelector(candidate: Map<string, string>, base: Map<string, string>): boolean {
-  for (const [key, value] of base.entries()) {
-    if (candidate.get(key) !== value) {
-      return false;
+function validateLokiLabels(labels: Record<string, string>): void {
+  const allowedLabels = parseCsvSet(ALLOWED_LOKI_LABELS);
+  const allowedHosts = parseCsvSet(ALLOWED_LOKI_HOSTS);
+  const allowedUnits = parseCsvSet(ALLOWED_LOKI_UNITS);
+  const hostsRegex = parseOptionalRegex(ALLOWED_LOKI_HOSTS_REGEX);
+  const unitsRegex = parseOptionalRegex(ALLOWED_LOKI_UNITS_REGEX);
+
+  if (allowedLabels.size === 0) {
+    throw buildError(503, 'Loki source is enabled but ALLOWED_LOKI_LABELS is empty');
+  }
+
+  for (const key of Object.keys(labels)) {
+    if (!allowedLabels.has(key)) {
+      throw buildError(403, `Loki label "${key}" is not allowed`);
     }
   }
-  return true;
+
+  if (ALLOWED_LOKI_JOB) {
+    const job = labels.job;
+    if (!job) {
+      throw buildError(403, 'Loki filters must include job');
+    }
+    if (job !== ALLOWED_LOKI_JOB) {
+      throw buildError(403, `Loki job "${job}" is not allowed`);
+    }
+  }
+
+  if (typeof labels.host === 'string') {
+    if (!matchesAllowlist(labels.host, allowedHosts, hostsRegex)) {
+      throw buildError(403, `Loki host "${labels.host}" is not allowed`);
+    }
+  }
+
+  if (typeof labels.unit === 'string') {
+    if (!matchesAllowlist(labels.unit, allowedUnits, unitsRegex)) {
+      throw buildError(403, `Loki unit "${labels.unit}" is not allowed`);
+    }
+  }
 }
 
 export function isLokiEnabled(): boolean {
@@ -241,11 +286,11 @@ export function isLokiEnabled(): boolean {
 }
 
 export function getAllowedLokiSelectors(): string[] {
-  return parseAllowedLokiSelectorsRaw().map(normalizeSelector).sort((a, b) => a.localeCompare(b));
+  return [];
 }
 
 export function getLokiSyntheticTargets(): string[] {
-  return getAllowedLokiSelectors().map((selector) => `loki:${selector}`);
+  return [];
 }
 
 export function validateAllowedLokiSelector(selector: string): string {
@@ -255,20 +300,7 @@ export function validateAllowedLokiSelector(selector: string): string {
 
   const normalized = normalizeSelector(selector);
   const candidate = parseSimpleSelector(normalized);
-  const allowed = getAllowedLokiSelectors();
-
-  if (allowed.length === 0) {
-    throw buildError(503, 'loki source is enabled but ALLOWED_LOKI_SELECTORS is empty');
-  }
-
-  const permitted = allowed.some((allowedSelector) => {
-    const base = parseSimpleSelector(allowedSelector);
-    return isSupersetSelector(candidate, base);
-  });
-
-  if (!permitted) {
-    throw buildError(403, 'selector is not allowlisted');
-  }
+  validateLokiLabels(Object.fromEntries(candidate.entries()));
 
   return normalized;
 }
@@ -294,10 +326,6 @@ function extractSelectorExpression(query: string): string {
 }
 
 function ensureAllowlistedSelectorFromQuery(query: string): void {
-  const allowed = getAllowedLokiSelectors();
-  if (!allowed.length) {
-    throw buildError(503, 'loki source is enabled but ALLOWED_LOKI_SELECTORS is empty');
-  }
   const selector = extractSelectorExpression(query);
   validateAllowedLokiSelector(selector);
 }
@@ -324,12 +352,14 @@ export function buildEffectiveLokiQuery(input: AnalyzeLogsBatchLokiRequest): str
   }
 
   if (typeof input.query === 'string' && input.query.trim().length > 0) {
-    return input.query.trim();
+    throw buildError(403, 'raw Loki query is not allowed; use filters');
   }
 
   if (!input.filters) {
     throw buildError(400, 'filters are required when query is not provided');
   }
+
+  validateLokiLabels(input.filters);
 
   const entries = Object.entries(input.filters).sort(([a], [b]) => a.localeCompare(b));
   const selector = entries.map(([key, value]) => `${key}="${escapeLogQLLabelValue(value)}"`).join(',');

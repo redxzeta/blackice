@@ -58,11 +58,38 @@ export const AnalyzeLogsBatchRequestSchema = z
 
     const hasQuery = typeof value.query === 'string' && value.query.trim().length > 0;
     const hasFilters = value.filters !== undefined;
-    if (hasQuery && hasFilters) {
+    const hasSelectors = (value.selectors?.length ?? 0) > 0;
+    const hasTargets = (value.targets?.length ?? 0) > 0;
+
+    if (hasQuery) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['query'],
-        message: 'provide only one of query or filters for source=loki'
+        message: 'query is not allowed for source=loki; use filters'
+      });
+    }
+
+    if (hasSelectors) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['selectors'],
+        message: 'selectors are not allowed for source=loki; use filters'
+      });
+    }
+
+    if (hasTargets) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['targets'],
+        message: 'targets are not allowed for source=loki; use filters'
+      });
+    }
+
+    if (!hasFilters) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['filters'],
+        message: 'filters are required for source=loki'
       });
     }
   })

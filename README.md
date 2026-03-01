@@ -102,7 +102,12 @@ Security controls:
 - `ALLOWLIST_LOG_PATHS` (comma-separated absolute files or directories)
 - `ALLOWED_LOG_FILES` (comma-separated absolute files for `source: "file"` in `/analyze/logs`)
 - `LOKI_BASE_URL` (enables Loki log source for `/analyze/logs/batch` when set)
-- `ALLOWED_LOKI_SELECTORS` (newline or semicolon separated selectors, or JSON array)
+- `ALLOWED_LOKI_JOB` (optional required value for `filters.job`)
+- `ALLOWED_LOKI_LABELS` (comma-separated allowed filter keys; e.g. `job,host,unit,app,service_name`)
+- `ALLOWED_LOKI_HOSTS` (comma-separated allowed `filters.host` values)
+- `ALLOWED_LOKI_UNITS` (comma-separated allowed `filters.unit` values)
+- `ALLOWED_LOKI_HOSTS_REGEX` (optional regex for `filters.host` allowlist matching)
+- `ALLOWED_LOKI_UNITS_REGEX` (optional regex for `filters.unit` allowlist matching)
 - `LOKI_TENANT_ID` (optional tenant header `X-Scope-OrgID`)
 - `LOKI_AUTH_BEARER` (optional bearer auth token for Loki)
 - `LOKI_TIMEOUT_MS` (default `10000`; timeout for Loki `query_range`)
@@ -223,32 +228,7 @@ curl -sS http://127.0.0.1:3000/analyze/logs \
   }'
 ```
 
-Loki batch analysis route:
-```bash
-curl -sS http://127.0.0.1:3000/analyze/logs/batch \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "source": "loki",
-    "targets": ["loki:{job=\"openclaw\",host=\"uwuntu\"}"],
-    "hours": 1,
-    "maxLines": 300
-  }'
-```
-
-Loki batch analysis route (raw query mode):
-```bash
-curl -sS http://127.0.0.1:3000/analyze/logs/batch \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "source": "loki",
-    "query": "{job=\"journald\",host=\"owonto\",unit=\"blackice-router.service\"} |= \"request_id=\"",
-    "start": "2026-03-01T04:00:00Z",
-    "end": "2026-03-01T04:15:00Z",
-    "limit": 500
-  }'
-```
-
-Loki batch analysis route (structured filters mode):
+Loki batch analysis route (rule-validated filters):
 ```bash
 curl -sS http://127.0.0.1:3000/analyze/logs/batch \
   -H 'Content-Type: application/json' \
