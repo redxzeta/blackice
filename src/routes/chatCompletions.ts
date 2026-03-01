@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import type { Express, Request, Response } from 'express';
 import { executeAction } from '../actions.js';
 import { log } from '../log.js';
@@ -6,6 +5,7 @@ import { runWorkerText } from '../ollama.js';
 import { ChatCompletionRequestSchema } from '../schema.js';
 import { sanitizeLLMOutput } from '../sanitize.js';
 import { sendOpenAIError } from '../http/errors.js';
+import { getRequestId } from '../http/requestLogging.js';
 import { buildMessageResponse } from '../chat/responseBuilders.js';
 import { resolveRoute } from '../chat/routeResolution.js';
 import { handleChatStreaming } from '../chat/streaming.js';
@@ -13,8 +13,7 @@ import { handleChatStreaming } from '../chat/streaming.js';
 export function registerChatCompletionsRoute(app: Express): void {
   app.post('/v1/chat/completions', async (req: Request, res: Response) => {
     const started = Date.now();
-    const requestId = String(req.header('x-request-id') ?? randomUUID());
-    res.setHeader('x-request-id', requestId);
+    const requestId = getRequestId(res);
 
     try {
       const parsed = ChatCompletionRequestSchema.safeParse(req.body);

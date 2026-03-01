@@ -3,6 +3,7 @@ import { registerLogExplainerRoutes } from './logExplainer/route.js';
 import { getVersionInfo } from './version.js';
 import { ollamaBaseURL } from './ollama.js';
 import { log } from './log.js';
+import { requestLoggingMiddleware } from './http/requestLogging.js';
 import { registerChatCompletionsRoute } from './routes/chatCompletions.js';
 import { registerPolicyRoutes } from './routes/policy.js';
 import { registerDebateRoutes } from './routes/debate.js';
@@ -13,6 +14,7 @@ const port = Number(process.env.PORT ?? 3000);
 const maxActiveDebates = Number(process.env.DEBATE_MAX_CONCURRENT ?? 1);
 const versionInfo = getVersionInfo();
 
+app.use(requestLoggingMiddleware);
 app.use(express.json({ limit: '1mb' }));
 app.use((_req, res, next) => {
   res.setHeader('x-blackice-version', versionInfo.version);

@@ -1,18 +1,17 @@
-import { randomUUID } from 'node:crypto';
 import type { Express, Request, Response } from 'express';
 import { DebateInputError, runDebate } from '../debate.js';
 import { log } from '../log.js';
 import { DebateRequestSchema } from '../schema.js';
 import { sendOpenAIError } from '../http/errors.js';
+import { getRequestId } from '../http/requestLogging.js';
 
 export function registerDebateRoutes(app: Express, maxActiveDebates: number): void {
   let activeDebates = 0;
 
   app.post('/v1/debate', async (req: Request, res: Response) => {
     const started = Date.now();
-    const requestId = String(req.header('x-request-id') ?? randomUUID());
+    const requestId = getRequestId(res);
     let acquiredDebateSlot = false;
-    res.setHeader('x-request-id', requestId);
 
     try {
       const parsed = DebateRequestSchema.safeParse(req.body);

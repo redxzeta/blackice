@@ -27,6 +27,7 @@ import { analyzeLogsWithOllama } from './ollamaClient.js';
 import { SYSTEM_PROMPT, buildUserPrompt, truncateLogs, type AnalyzePromptRequest } from './promptTemplates.js';
 import { ensureReadOnlyAnalysisOutput, sanitizeReadOnlyAnalysisOutput } from './outputSafety.js';
 import { errMessage, toHttpError } from '../http/errors.js';
+import { getRequestId } from '../http/requestLogging.js';
 import { parseBodyOrRespond } from '../http/validation.js';
 import { buildLogExplainerStatus } from './status.js';
 
@@ -252,7 +253,11 @@ export function registerLogExplainerRoutes(app: Express): void {
       res.status(200).json(AnalyzeLogsIncrementalResponseSchema.parse(bodyOut));
     } catch (error: unknown) {
       const httpError = toHttpError(error);
-      log.error('log_explainer_incremental_failed', { status: httpError.status, message: httpError.message });
+      log.error('log_explainer_incremental_failed', {
+        request_id: getRequestId(res),
+        status: httpError.status,
+        message: httpError.message
+      });
       res.status(httpError.status).json({ error: httpError.message });
     }
   });
@@ -382,7 +387,11 @@ export function registerLogExplainerRoutes(app: Express): void {
       res.status(200).json(bodyOut);
     } catch (error: unknown) {
       const httpError = toHttpError(error);
-      log.error('log_explainer_batch_failed', { status: httpError.status, message: httpError.message });
+      log.error('log_explainer_batch_failed', {
+        request_id: getRequestId(res),
+        status: httpError.status,
+        message: httpError.message
+      });
       res.status(httpError.status).json({ error: httpError.message });
     }
   });
@@ -398,7 +407,11 @@ export function registerLogExplainerRoutes(app: Express): void {
       res.status(200).json(AnalyzeLogsResponseSchema.parse(analyzed));
     } catch (error: unknown) {
       const httpError = toHttpError(error);
-      log.error('log_explainer_failed', { status: httpError.status, message: httpError.message });
+      log.error('log_explainer_failed', {
+        request_id: getRequestId(res),
+        status: httpError.status,
+        message: httpError.message
+      });
       res.status(httpError.status).json({ error: httpError.message });
     }
   });
