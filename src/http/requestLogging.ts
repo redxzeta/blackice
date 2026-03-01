@@ -56,11 +56,17 @@ export function getRequestId(res: Response): string {
 export function requestLoggingMiddleware(req: Request, res: Response, next: NextFunction): void {
   const startedAt = process.hrtime.bigint();
   const requestId = normalizeRequestId(parseRequestIdHeader(req)) ?? randomUUID();
+  let logged = false;
 
   res.locals.requestId = requestId;
   res.setHeader(REQUEST_ID_HEADER, requestId);
 
-  res.on('finish', () => {
+  const emitRequestLog = (completed: boolean): void => {
+    if (logged) {
+      return;
+    }
+    logged = true;
+
     const latencyMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
 
     log.info('http_request', {
@@ -70,8 +76,16 @@ export function requestLoggingMiddleware(req: Request, res: Response, next: Next
       route: formatRoute(req),
       status: res.statusCode,
       latency_ms: Number(latencyMs.toFixed(3)),
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      completed
     });
+  };
+
+  res.on('finish', () => {
+    emitRequestLog(true);
+  });
+  res.on('close', () => {
+    emitRequestLog(res.writableEnded);
   });
 
   next();
