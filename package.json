@@ -10,14 +10,15 @@
     "prestart": "npm run build",
     "start": "node dist/server.js",
     "dev": "tsx src/server.ts",
-    "version:patch": "npm version patch -m \"chore(release): %s\"",
-    "version:minor": "npm version minor -m \"chore(release): %s\"",
-    "version:major": "npm version major -m \"chore(release): %s\"",
+    "version:patch": "pnpm version patch -m \"chore(release): %s\"",
+    "version:minor": "pnpm version minor -m \"chore(release): %s\"",
+    "version:major": "pnpm version major -m \"chore(release): %s\"",
     "tag:change": "node scripts/tag-change.mjs"
   },
   "engines": {
     "node": ">=18.17"
   },
+  "packageManager": "pnpm@10.14.0",
   "dependencies": {
     "ai": "^5.0.0",
     "express": "^4.21.2",

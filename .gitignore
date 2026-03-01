@@ -11,6 +11,8 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 *.log
+package-lock.json
+npm-shrinkwrap.json
 
 # env files
 .env
