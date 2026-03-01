@@ -11,7 +11,7 @@ Use the Log Explainer as an HTTP endpoint from OpenClaw.
 Target discovery endpoint:
 - Method: `GET`
 - URL: `http://192.168.1.130:3000/analyze/logs/targets`
-- Purpose: Returns synthetic/discovery targets (currently Loki-oriented).
+- Purpose: Returns an empty placeholder list in Loki-only mode (structured discovery metadata tracked in issue #48).
 
 Capability/status endpoint:
 - Method: `GET`

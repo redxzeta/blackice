@@ -15,6 +15,7 @@ import {
   checkLokiHealth,
   collectLogs,
   collectLokiBatchLogs,
+  ensureLokiRulesConfigured,
   getLokiSyntheticTargets
 } from './logCollector.js';
 import { analyzeLogsWithOllama } from './ollamaClient.js';
@@ -108,9 +109,15 @@ async function runConcurrent<T, R>(items: T[], concurrency: number, worker: (ite
 
 export function registerLogExplainerRoutes(app: Express): void {
   app.get('/analyze/logs/targets', (_req: Request, res: Response) => {
-    const targets = [...getLokiSyntheticTargets()];
-    const body = AnalyzeLogsTargetsResponseSchema.parse({ targets });
-    res.status(200).json(body);
+    try {
+      ensureLokiRulesConfigured();
+      const targets = [...getLokiSyntheticTargets()];
+      const body = AnalyzeLogsTargetsResponseSchema.parse({ targets });
+      res.status(200).json(body);
+    } catch (error: unknown) {
+      const httpError = toHttpError(error);
+      res.status(httpError.status).json({ error: httpError.message });
+    }
   });
 
   app.get('/health/loki', async (_req: Request, res: Response) => {
