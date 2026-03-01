@@ -3,6 +3,22 @@ import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 
+const DEFAULT_CONFIG_FILE = './config/blackice.local.yaml';
+const DEFAULT_LOG_COLLECTION_TIMEOUT_MS = 15_000;
+const DEFAULT_MAX_COMMAND_BYTES = 2_000_000;
+const DEFAULT_MAX_QUERY_HOURS = 168;
+const DEFAULT_MAX_LINES_CAP = 2_000;
+const DEFAULT_MAX_CONCURRENCY = 5;
+const DEFAULT_MAX_LOG_CHARS = 40_000;
+const DEFAULT_OLLAMA_BASE_URL = 'http://192.168.1.230:11434';
+const DEFAULT_OLLAMA_MODEL = 'qwen2.5:14b';
+const DEFAULT_OLLAMA_TIMEOUT_MS = 45_000;
+const DEFAULT_OLLAMA_RETRY_ATTEMPTS = 2;
+const DEFAULT_OLLAMA_RETRY_BACKOFF_MS = 1_000;
+const DEFAULT_LOKI_MAX_WINDOW_MINUTES = 60;
+const DEFAULT_LOKI_DEFAULT_WINDOW_MINUTES = 15;
+const DEFAULT_LOKI_REQUIRE_SCOPE_LABELS = true;
+
 const YamlConfigSchema = z
   .object({
     version: z.number().int().positive().optional(),
@@ -94,7 +110,7 @@ export function getRuntimeConfig(): RuntimeConfig {
     return cachedRuntimeConfig;
   }
 
-  const configFileRaw = String(process.env.BLACKICE_CONFIG_FILE ?? './config/blackice.local.yaml').trim();
+  const configFileRaw = String(process.env.BLACKICE_CONFIG_FILE ?? DEFAULT_CONFIG_FILE).trim();
   const configFile = path.resolve(configFileRaw);
   const yamlConfig = loadYamlConfig(configFile);
 
@@ -104,20 +120,20 @@ export function getRuntimeConfig(): RuntimeConfig {
   const configDir = path.dirname(configFile);
 
   const limits = {
-    logCollectionTimeoutMs: limitsYaml.logCollectionTimeoutMs ?? 15_000,
-    maxCommandBytes: limitsYaml.maxCommandBytes ?? 2_000_000,
-    maxQueryHours: limitsYaml.maxQueryHours ?? 168,
-    maxLinesCap: limitsYaml.maxLinesCap ?? 2_000,
-    maxConcurrency: limitsYaml.maxConcurrency ?? 5,
-    maxLogChars: limitsYaml.maxLogChars ?? 40_000
+    logCollectionTimeoutMs: limitsYaml.logCollectionTimeoutMs ?? DEFAULT_LOG_COLLECTION_TIMEOUT_MS,
+    maxCommandBytes: limitsYaml.maxCommandBytes ?? DEFAULT_MAX_COMMAND_BYTES,
+    maxQueryHours: limitsYaml.maxQueryHours ?? DEFAULT_MAX_QUERY_HOURS,
+    maxLinesCap: limitsYaml.maxLinesCap ?? DEFAULT_MAX_LINES_CAP,
+    maxConcurrency: limitsYaml.maxConcurrency ?? DEFAULT_MAX_CONCURRENCY,
+    maxLogChars: limitsYaml.maxLogChars ?? DEFAULT_MAX_LOG_CHARS
   };
 
   const ollama = {
-    baseUrl: String(ollamaYaml.baseUrl ?? 'http://192.168.1.230:11434').trim(),
-    model: String(ollamaYaml.model ?? 'qwen2.5:14b').trim(),
-    timeoutMs: ollamaYaml.timeoutMs ?? 45_000,
-    retryAttempts: ollamaYaml.retryAttempts ?? 2,
-    retryBackoffMs: ollamaYaml.retryBackoffMs ?? 1_000
+    baseUrl: String(ollamaYaml.baseUrl ?? DEFAULT_OLLAMA_BASE_URL).trim(),
+    model: String(ollamaYaml.model ?? DEFAULT_OLLAMA_MODEL).trim(),
+    timeoutMs: ollamaYaml.timeoutMs ?? DEFAULT_OLLAMA_TIMEOUT_MS,
+    retryAttempts: ollamaYaml.retryAttempts ?? DEFAULT_OLLAMA_RETRY_ATTEMPTS,
+    retryBackoffMs: ollamaYaml.retryBackoffMs ?? DEFAULT_OLLAMA_RETRY_BACKOFF_MS
   };
 
   const rulesFileRaw = String(lokiYaml.rulesFile ?? '').trim();
@@ -126,11 +142,11 @@ export function getRuntimeConfig(): RuntimeConfig {
   const loki = {
     baseUrl: String(lokiYaml.baseUrl ?? '').trim().replace(/\/$/, ''),
     timeoutMs: lokiYaml.timeoutMs ?? limits.logCollectionTimeoutMs,
-    maxWindowMinutes: lokiYaml.maxWindowMinutes ?? 60,
-    defaultWindowMinutes: lokiYaml.defaultWindowMinutes ?? 15,
+    maxWindowMinutes: lokiYaml.maxWindowMinutes ?? DEFAULT_LOKI_MAX_WINDOW_MINUTES,
+    defaultWindowMinutes: lokiYaml.defaultWindowMinutes ?? DEFAULT_LOKI_DEFAULT_WINDOW_MINUTES,
     maxLinesCap: lokiYaml.maxLinesCap ?? limits.maxLinesCap,
     maxResponseBytes: lokiYaml.maxResponseBytes ?? limits.maxCommandBytes,
-    requireScopeLabels: lokiYaml.requireScopeLabels ?? true,
+    requireScopeLabels: lokiYaml.requireScopeLabels ?? DEFAULT_LOKI_REQUIRE_SCOPE_LABELS,
     rulesFile
   };
 

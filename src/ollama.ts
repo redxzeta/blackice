@@ -1,6 +1,7 @@
 import { generateText, streamText } from 'ai';
 import { createOllama } from 'ollama-ai-provider-v2';
 import { buildWorkerContractPrompt, sanitizeLLMOutput } from './sanitize.js';
+import { getRuntimeConfig } from './config/runtimeConfig.js';
 
 function normalizeOllamaBaseURL(input: string): string {
   const trimmed = input.trim().replace(/\/+$/, '');
@@ -13,7 +14,7 @@ function normalizeOllamaBaseURL(input: string): string {
   return `${trimmed}/api`;
 }
 
-const configuredBaseURL = process.env.OLLAMA_BASE_URL?.trim() || 'http://localhost:11434';
+const configuredBaseURL = getRuntimeConfig().ollama.baseUrl;
 const baseURL = normalizeOllamaBaseURL(configuredBaseURL);
 
 const ollama = createOllama({
