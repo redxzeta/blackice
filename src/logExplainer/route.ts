@@ -331,7 +331,7 @@ export function registerLogExplainerRoutes(app: Express): void {
           result = {
             target: fallbackTarget,
             ok: false,
-            error: errMessage(httpError),
+            error: httpError.message,
             status: httpError.status
           };
         }
