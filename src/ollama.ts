@@ -40,16 +40,22 @@ export type GenerateParams = {
   temperature?: number;
   maxTokens?: number;
   explicitJsonAllowed?: boolean;
+  requestId?: string;
 };
 
 export async function runWorkerText(params: GenerateParams): Promise<{ text: string }> {
   const prompt = buildWorkerContractPrompt(params.input, params.explicitJsonAllowed);
+  const headers: Record<string, string> = {};
+  if (params.requestId) {
+    headers['X-Request-ID'] = params.requestId;
+  }
   const model = resolveModel(params.modelId) as Parameters<typeof generateText>[0]['model'];
   const result = await generateText({
     model,
     prompt,
     temperature: params.temperature,
-    maxOutputTokens: params.maxTokens
+    maxOutputTokens: params.maxTokens,
+    headers: Object.keys(headers).length > 0 ? headers : undefined
   });
 
   const sanitized = sanitizeLLMOutput(result.text);
@@ -62,13 +68,18 @@ export async function runWorkerText(params: GenerateParams): Promise<{ text: str
 
 export function runWorkerTextStream(params: GenerateParams) {
   const prompt = buildWorkerContractPrompt(params.input, params.explicitJsonAllowed);
+  const headers: Record<string, string> = {};
+  if (params.requestId) {
+    headers['X-Request-ID'] = params.requestId;
+  }
   const model = resolveModel(params.modelId) as Parameters<typeof streamText>[0]['model'];
 
   return streamText({
     model,
     prompt,
     temperature: params.temperature,
-    maxOutputTokens: params.maxTokens
+    maxOutputTokens: params.maxTokens,
+    headers: Object.keys(headers).length > 0 ? headers : undefined
   });
 }
 

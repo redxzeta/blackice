@@ -1,12 +1,13 @@
 {
   "name": "blackice-policy-router",
-  "version": "0.1.0",
+  "version": "0.1.12",
   "private": true,
   "type": "module",
   "description": "OpenAI-compatible policy/router server for OpenClaw backed by Ollama",
   "main": "dist/server.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "prestart": "npm run build",
     "start": "node dist/server.js",
     "dev": "tsx src/server.ts",
     "version:patch": "pnpm version patch -m \"chore(release): %s\"",
