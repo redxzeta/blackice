@@ -3,7 +3,6 @@ import { log } from '../log.js';
 import {
   AnalyzeLogsBatchRequestSchema,
   AnalyzeLogsBatchResponseSchema,
-  BATCH_EVIDENCE_LINES_DEFAULT,
   AnalyzeLogsIncrementalRequestSchema,
   AnalyzeLogsIncrementalResponseSchema,
   AnalyzeLogsRequestSchema,
@@ -52,8 +51,12 @@ type EvidenceLine = {
   line: string;
 };
 
-function buildEvidence(rawLogs: string, requestedLines: number | undefined): EvidenceLine[] {
-  const evidenceLines = Math.max(1, requestedLines ?? BATCH_EVIDENCE_LINES_DEFAULT);
+function buildEvidence(rawLogs: string, requestedLines: number | undefined): EvidenceLine[] | undefined {
+  if (requestedLines === undefined) {
+    return undefined;
+  }
+
+  const evidenceLines = Math.max(1, requestedLines);
   const lines = rawLogs
     .split(/\r?\n/)
     .map((line) => line.trimEnd())
@@ -230,7 +233,7 @@ export function registerLogExplainerRoutes(app: Express): void {
             sinceMinutes: 'number (optional; overrides hours for source=loki)',
             maxLines: 'number (optional)',
             concurrency: 'number (optional)',
-            evidenceLines: 'number (optional; default 10, max 50)'
+            evidenceLines: 'number (optional; max 50; include evidence only when set)'
           },
           responseSchema: LogExplainerJsonSchemas.analyzeLogsBatchResponse
         },
