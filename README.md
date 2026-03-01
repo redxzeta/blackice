@@ -102,12 +102,7 @@ Security controls:
 - `ALLOWLIST_LOG_PATHS` (comma-separated absolute files or directories)
 - `ALLOWED_LOG_FILES` (comma-separated absolute files for `source: "file"` in `/analyze/logs`)
 - `LOKI_BASE_URL` (enables Loki log source for `/analyze/logs/batch` when set)
-- `ALLOWED_LOKI_JOB` (optional required value for `filters.job`)
-- `ALLOWED_LOKI_LABELS` (comma-separated allowed filter keys; e.g. `job,host,unit,app,service_name`)
-- `ALLOWED_LOKI_HOSTS` (comma-separated allowed `filters.host` values)
-- `ALLOWED_LOKI_UNITS` (comma-separated allowed `filters.unit` values)
-- `ALLOWED_LOKI_HOSTS_REGEX` (optional regex for `filters.host` allowlist matching)
-- `ALLOWED_LOKI_UNITS_REGEX` (optional regex for `filters.unit` allowlist matching)
+- `LOKI_RULES_FILE` (optional path to YAML rules file; default `./config/loki-rules.yaml`)
 - `LOKI_TENANT_ID` (optional tenant header `X-Scope-OrgID`)
 - `LOKI_AUTH_BEARER` (optional bearer auth token for Loki)
 - `LOKI_TIMEOUT_MS` (default `10000`; timeout for Loki `query_range`)
@@ -128,6 +123,18 @@ Security controls:
 - `READINESS_STRICT` (`1` or `0`, default `1`; when `1`, `/readyz` returns `503` if upstream is unavailable)
 - `BUILD_GIT_SHA` (optional; exposed by `GET /version`)
 - `BUILD_TIME` (optional ISO timestamp; exposed by `GET /version`)
+
+Loki rules YAML format:
+```yaml
+job: journald
+allowedLabels: [job, host, unit, app, service_name]
+hosts: [owonto, uwuntu]
+units: [openclaw.service, blackice-router.service, promtail.service]
+# hostsRegex: "^prod-(api|worker)-\\d+$"
+# unitsRegex: "^[a-z0-9-]+\\.service$"
+```
+
+Example file: `config/loki-rules.example.yaml`
 
 ## Quick Tests
 Streaming CHAT:

@@ -18,6 +18,7 @@ LOKI_DEFAULT_WINDOW_MINUTES=15 \
 LOKI_MAX_LINES_CAP=2000 \
 LOKI_MAX_RESPONSE_BYTES=2000000 \
 LOKI_REQUIRE_SCOPE_LABELS=true \
+LOKI_RULES_FILE=./config/loki-rules.yaml \
 ALLOWED_LOG_FILES=/var/log/syslog,/var/log/auth.log \
 npm start
 ```
@@ -120,6 +121,7 @@ curl -sS http://127.0.0.1:3000/analyze/logs/batch \
 - Uses only read-only collectors: `journalctl`, `docker logs`, and explicit allowlisted files.
 - Loki source is read-only via `/loki/api/v1/query_range`.
 - Loki selectors are constructed internally from validated `filters` (raw `query` and selector strings are rejected).
+- Loki allowlist rules are loaded from `LOKI_RULES_FILE` YAML.
 - No shell mode execution (`spawn` with `shell: false`).
 - Command and file output byte caps are enforced.
 - Loki guards: default 15-minute window, max window (default 60 minutes), max line cap, max response bytes, and scoped-label requirement (`host` or `unit`) unless `allowUnscoped: true`.

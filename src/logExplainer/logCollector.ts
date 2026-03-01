@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { access, constants, open as openFile } from 'node:fs/promises';
 import path from 'node:path';
+import { parse as parseYaml } from 'yaml';
 import type { AnalyzeLogsBatchLokiRequest, AnalyzeLogsRequest } from './schema.js';
 
 const LOG_COLLECTION_TIMEOUT_MS = Number(process.env.LOG_COLLECTION_TIMEOUT_MS ?? 15_000);
@@ -18,12 +20,7 @@ const LOKI_MAX_LINES_CAP = Number(process.env.LOKI_MAX_LINES_CAP ?? MAX_LINES_CA
 const LOKI_MAX_RESPONSE_BYTES = Number(process.env.LOKI_MAX_RESPONSE_BYTES ?? MAX_COMMAND_BYTES);
 const LOKI_REQUIRE_SCOPE_LABELS =
   String(process.env.LOKI_REQUIRE_SCOPE_LABELS ?? 'true').trim().toLowerCase() !== 'false';
-const ALLOWED_LOKI_JOB = String(process.env.ALLOWED_LOKI_JOB ?? '').trim();
-const ALLOWED_LOKI_LABELS = String(process.env.ALLOWED_LOKI_LABELS ?? 'job,host,unit,app,service_name').trim();
-const ALLOWED_LOKI_HOSTS = String(process.env.ALLOWED_LOKI_HOSTS ?? '').trim();
-const ALLOWED_LOKI_UNITS = String(process.env.ALLOWED_LOKI_UNITS ?? '').trim();
-const ALLOWED_LOKI_HOSTS_REGEX = String(process.env.ALLOWED_LOKI_HOSTS_REGEX ?? '').trim();
-const ALLOWED_LOKI_UNITS_REGEX = String(process.env.ALLOWED_LOKI_UNITS_REGEX ?? '').trim();
+const LOKI_RULES_FILE = path.resolve(String(process.env.LOKI_RULES_FILE ?? './config/loki-rules.yaml').trim());
 
 type LokiStreamResult = {
   stream?: Record<string, string>;
@@ -37,6 +34,17 @@ type LokiQueryRangeResponse = {
     result?: LokiStreamResult[];
   };
 };
+
+type LokiRulesConfig = {
+  job?: string;
+  allowedLabels: Set<string>;
+  hosts: Set<string>;
+  units: Set<string>;
+  hostsRegex: RegExp | null;
+  unitsRegex: RegExp | null;
+};
+
+let cachedLokiRules: LokiRulesConfig | null = null;
 
 function buildError(status: number, message: string): Error & { status: number } {
   const err = new Error(message) as Error & { status: number };
@@ -166,16 +174,28 @@ function parseAllowedFilePaths(): Set<string> {
   );
 }
 
-function parseCsvSet(raw: string): Set<string> {
-  return new Set(
-    raw
-      .split(',')
-      .map((value) => value.trim())
-      .filter(Boolean)
-  );
+function parseStringArray(value: unknown, field: string, required: boolean): string[] {
+  if (value === undefined || value === null) {
+    if (required) {
+      throw buildError(503, `Loki rules file missing required field: ${field}`);
+    }
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw buildError(503, `Loki rules field "${field}" must be an array of strings`);
+  }
+
+  return value
+    .map((entry) => {
+      if (typeof entry !== 'string') {
+        throw buildError(503, `Loki rules field "${field}" must contain only strings`);
+      }
+      return entry.trim();
+    })
+    .filter(Boolean);
 }
 
-function parseOptionalRegex(raw: string): RegExp | null {
+function parseOptionalRegex(raw: string, field: string): RegExp | null {
   if (!raw) {
     return null;
   }
@@ -183,7 +203,7 @@ function parseOptionalRegex(raw: string): RegExp | null {
   try {
     return new RegExp(raw);
   } catch {
-    throw buildError(500, 'Invalid regex in Loki allowlist configuration');
+    throw buildError(503, `Invalid regex in Loki rules field "${field}"`);
   }
 }
 
@@ -195,6 +215,69 @@ function matchesAllowlist(value: string, list: Set<string>, regex: RegExp | null
     return true;
   }
   return false;
+}
+
+function loadLokiRulesConfig(): LokiRulesConfig {
+  if (cachedLokiRules) {
+    return cachedLokiRules;
+  }
+
+  if (!existsSync(LOKI_RULES_FILE)) {
+    throw buildError(503, `Loki rules file not found: ${LOKI_RULES_FILE}`);
+  }
+
+  let parsed: unknown;
+  try {
+    const raw = readFileSync(LOKI_RULES_FILE, 'utf8');
+    parsed = parseYaml(raw);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw buildError(503, `Failed to read Loki rules file (${LOKI_RULES_FILE}): ${message}`);
+  }
+
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw buildError(503, 'Loki rules file must contain a top-level object');
+  }
+
+  const body = parsed as Record<string, unknown>;
+  const allowedLabels = new Set(parseStringArray(body.allowedLabels, 'allowedLabels', true));
+  if (allowedLabels.size === 0) {
+    throw buildError(503, 'Loki rules file must include at least one allowedLabels entry');
+  }
+
+  const job = typeof body.job === 'string' ? body.job.trim() : '';
+  if (body.job !== undefined && typeof body.job !== 'string') {
+    throw buildError(503, 'Loki rules field "job" must be a string');
+  }
+
+  const hosts = new Set(parseStringArray(body.hosts, 'hosts', false));
+  const units = new Set(parseStringArray(body.units, 'units', false));
+
+  let hostsRegexRaw = '';
+  if (body.hostsRegex !== undefined) {
+    if (typeof body.hostsRegex !== 'string') {
+      throw buildError(503, 'Loki rules field "hostsRegex" must be a string');
+    }
+    hostsRegexRaw = body.hostsRegex.trim();
+  }
+
+  let unitsRegexRaw = '';
+  if (body.unitsRegex !== undefined) {
+    if (typeof body.unitsRegex !== 'string') {
+      throw buildError(503, 'Loki rules field "unitsRegex" must be a string');
+    }
+    unitsRegexRaw = body.unitsRegex.trim();
+  }
+
+  cachedLokiRules = {
+    job: job || undefined,
+    allowedLabels,
+    hosts,
+    units,
+    hostsRegex: parseOptionalRegex(hostsRegexRaw, 'hostsRegex'),
+    unitsRegex: parseOptionalRegex(unitsRegexRaw, 'unitsRegex')
+  };
+  return cachedLokiRules;
 }
 
 function parseSimpleSelector(selector: string): Map<string, string> {
@@ -242,40 +325,32 @@ function normalizeSelector(selector: string): string {
 }
 
 function validateLokiLabels(labels: Record<string, string>): void {
-  const allowedLabels = parseCsvSet(ALLOWED_LOKI_LABELS);
-  const allowedHosts = parseCsvSet(ALLOWED_LOKI_HOSTS);
-  const allowedUnits = parseCsvSet(ALLOWED_LOKI_UNITS);
-  const hostsRegex = parseOptionalRegex(ALLOWED_LOKI_HOSTS_REGEX);
-  const unitsRegex = parseOptionalRegex(ALLOWED_LOKI_UNITS_REGEX);
-
-  if (allowedLabels.size === 0) {
-    throw buildError(503, 'Loki source is enabled but ALLOWED_LOKI_LABELS is empty');
-  }
+  const rules = loadLokiRulesConfig();
 
   for (const key of Object.keys(labels)) {
-    if (!allowedLabels.has(key)) {
+    if (!rules.allowedLabels.has(key)) {
       throw buildError(403, `Loki label "${key}" is not allowed`);
     }
   }
 
-  if (ALLOWED_LOKI_JOB) {
+  if (rules.job) {
     const job = labels.job;
     if (!job) {
       throw buildError(403, 'Loki filters must include job');
     }
-    if (job !== ALLOWED_LOKI_JOB) {
+    if (job !== rules.job) {
       throw buildError(403, `Loki job "${job}" is not allowed`);
     }
   }
 
   if (typeof labels.host === 'string') {
-    if (!matchesAllowlist(labels.host, allowedHosts, hostsRegex)) {
+    if (!matchesAllowlist(labels.host, rules.hosts, rules.hostsRegex)) {
       throw buildError(403, `Loki host "${labels.host}" is not allowed`);
     }
   }
 
   if (typeof labels.unit === 'string') {
-    if (!matchesAllowlist(labels.unit, allowedUnits, unitsRegex)) {
+    if (!matchesAllowlist(labels.unit, rules.units, rules.unitsRegex)) {
       throw buildError(403, `Loki unit "${labels.unit}" is not allowed`);
     }
   }
