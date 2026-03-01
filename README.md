@@ -47,14 +47,21 @@ Dev mode:
 npm run dev
 ```
 
+## Source Layout
+- Canonical runtime source lives in `src/` (TypeScript).
+- Legacy root JavaScript modules were removed; runtime code should live under `src/` only.
+
 ## Endpoints
 - `POST /v1/chat/completions`
 - `POST /v1/debate`
 - `POST /analyze/logs`
-- `GET /logs/recent`
-- `GET /logs/metrics`
+- `POST /v1/policy/dry-run`
+- `GET /logs/recent` *(requires `OPS_ENABLED=1`)*
+- `GET /logs/metrics` *(requires `OPS_ENABLED=1`)*
 - `GET /version`
 - `GET /healthz`
+- `GET /readyz`
+- `GET /health/loki`
 
 ## Envelope Contract
 Latest `user` message is interpreted as:
@@ -94,16 +101,26 @@ Security controls:
 - `LOG_LEVEL` (`info`/`debug`, default `info`)
 - `ALLOWLIST_LOG_PATHS` (comma-separated absolute files or directories)
 - `ALLOWED_LOG_FILES` (comma-separated absolute files for `source: "file"` in `/analyze/logs`)
-- `LOKI_BASE_URL` (required for `source: "loki"` in `/analyze/logs/batch`)
-- `LOKI_TIMEOUT_MS` (default `10000`)
-- `LOKI_MAX_WINDOW_MINUTES` (default `60`)
-- `LOKI_DEFAULT_WINDOW_MINUTES` (default `15`)
-- `LOKI_MAX_LINES_CAP` (default `2000`)
-- `LOKI_MAX_RESPONSE_BYTES` (default `2000000`)
-- `LOKI_REQUIRE_SCOPE_LABELS` (default `true`; requires `host` or `unit` unless overridden)
+- `LOKI_BASE_URL` (enables Loki log source for `/analyze/logs/batch` when set)
+- `ALLOWED_LOKI_SELECTORS` (newline or semicolon separated selectors, or JSON array)
+- `LOKI_TENANT_ID` (optional tenant header `X-Scope-OrgID`)
+- `LOKI_AUTH_BEARER` (optional bearer auth token for Loki)
+- `LOKI_TIMEOUT_MS` (default `10000`; timeout for Loki `query_range`)
+- `LOKI_MAX_WINDOW_MINUTES` (default `60`; max `start`/`end` window for Loki query mode)
+- `LOKI_DEFAULT_WINDOW_MINUTES` (default `15`; default window when `start`/`end` omitted)
+- `LOKI_MAX_LINES_CAP` (default `2000`; cap for Loki query mode `limit`)
+- `LOKI_MAX_RESPONSE_BYTES` (default `2000000`; cap for Loki lines payload in query mode)
+- `LOKI_REQUIRE_SCOPE_LABELS` (default `true`; requires `host` or `unit` in query mode unless `allowUnscoped=true`)
+- `MAX_QUERY_HOURS` (max log query lookback window)
+- `MAX_LINES` (effective cap for collected lines)
+- `MAX_CONCURRENCY` (max allowed batch concurrency)
 - `DEBATE_MODEL_ALLOWLIST` (comma-separated model IDs allowed for `/v1/debate`)
 - `DEBATE_MAX_CONCURRENT` (default `1`; max active `/v1/debate` requests)
 - `LOG_BUFFER_MAX_ENTRIES` (default `2000`; in-memory API log buffer size for `/logs/*`)
+- `OPS_ENABLED` (`1` to expose `/logs/recent` and `/logs/metrics`; default disabled)
+- `STREAM_SUPPRESS_TOOLISH` (`1` to suppress tool-call-like SSE payloads; default preserves raw output)
+- `READINESS_TIMEOUT_MS` (default `1500`; timeout in ms for `/readyz` Ollama probe, clamped to `100..10000`)
+- `READINESS_STRICT` (`1` or `0`, default `1`; when `1`, `/readyz` returns `503` if upstream is unavailable)
 - `BUILD_GIT_SHA` (optional; exposed by `GET /version`)
 - `BUILD_TIME` (optional ISO timestamp; exposed by `GET /version`)
 
@@ -150,6 +167,34 @@ curl -sS http://127.0.0.1:3000/v1/chat/completions \
   }'
 ```
 
+
+Policy dry-run (no model/action execution):
+```bash
+curl -sS http://127.0.0.1:3000/v1/policy/dry-run \
+  -H 'Content-Type: application/json' \
+  -H 'x-request-id: demo-dryrun-001' \
+  -d '{
+    "model": "router/default",
+    "stream": true,
+    "messages": [{"role":"user","content":"Explain RAID levels in simple terms."}]
+  }'
+```
+
+Example response shape:
+```json
+{
+  "mode": "dry_run",
+  "execute": false,
+  "envelope": {"kind": "chat", "raw": "Explain RAID levels in simple terms."},
+  "route": {
+    "kind": "chat",
+    "workerModel": "llama3.1:8b",
+    "reason": "default_general",
+    "stream": true
+  }
+}
+```
+
 Debate route:
 ```bash
 curl -sS -i http://127.0.0.1:3000/v1/debate \
@@ -178,13 +223,39 @@ curl -sS http://127.0.0.1:3000/analyze/logs \
   }'
 ```
 
-Log Explainer batch (Loki raw query):
+Loki batch analysis route:
+```bash
+curl -sS http://127.0.0.1:3000/analyze/logs/batch \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "source": "loki",
+    "targets": ["loki:{job=\"openclaw\",host=\"uwuntu\"}"],
+    "hours": 1,
+    "maxLines": 300
+  }'
+```
+
+Loki batch analysis route (raw query mode):
 ```bash
 curl -sS http://127.0.0.1:3000/analyze/logs/batch \
   -H 'Content-Type: application/json' \
   -d '{
     "source": "loki",
     "query": "{job=\"journald\",host=\"owonto\",unit=\"blackice-router.service\"} |= \"request_id=\"",
+    "start": "2026-03-01T04:00:00Z",
+    "end": "2026-03-01T04:15:00Z",
+    "limit": 500
+  }'
+```
+
+Loki batch analysis route (structured filters mode):
+```bash
+curl -sS http://127.0.0.1:3000/analyze/logs/batch \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "source": "loki",
+    "filters": {"job":"journald","host":"owonto","unit":"blackice-router.service"},
+    "contains": "request_id=",
     "limit": 500
   }'
 ```
@@ -197,6 +268,14 @@ curl -sS "http://127.0.0.1:3000/logs/recent?limit=100"
 API metrics (last 1 hour):
 ```bash
 curl -sS "http://127.0.0.1:3000/logs/metrics?window=1h"
+```
+
+Readiness check:
+
+
+Readiness check:
+```bash
+curl -sS -i "http://127.0.0.1:3000/readyz"
 ```
 
 Runtime version:

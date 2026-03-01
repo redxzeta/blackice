@@ -6,14 +6,16 @@ import type { AnalyzeLogsBatchLokiRequest, AnalyzeLogsRequest } from './schema.j
 const LOG_COLLECTION_TIMEOUT_MS = Number(process.env.LOG_COLLECTION_TIMEOUT_MS ?? 15_000);
 const MAX_COMMAND_BYTES = Number(process.env.MAX_COMMAND_BYTES ?? 2_000_000);
 const MAX_FILE_BYTES = Number(process.env.MAX_FILE_BYTES ?? 2_000_000);
-const MAX_HOURS = Number(process.env.MAX_HOURS ?? 168);
-const MAX_LINES_CAP = Number(process.env.MAX_LINES_CAP ?? 2_000);
-const LOKI_BASE_URL = String(process.env.LOKI_BASE_URL ?? '').trim();
-const LOKI_TIMEOUT_MS = Number(process.env.LOKI_TIMEOUT_MS ?? 10_000);
+const MAX_HOURS = Number(process.env.MAX_QUERY_HOURS ?? process.env.MAX_HOURS ?? 168);
+const MAX_LINES_CAP = Number(process.env.MAX_LINES ?? process.env.MAX_LINES_CAP ?? 2_000);
+const LOKI_BASE_URL = String(process.env.LOKI_BASE_URL ?? '').trim().replace(/\/$/, '');
+const LOKI_TENANT_ID = String(process.env.LOKI_TENANT_ID ?? '').trim();
+const LOKI_AUTH_BEARER = String(process.env.LOKI_AUTH_BEARER ?? '').trim();
+const LOKI_TIMEOUT_MS = Number(process.env.LOKI_TIMEOUT_MS ?? LOG_COLLECTION_TIMEOUT_MS);
 const LOKI_MAX_WINDOW_MINUTES = Number(process.env.LOKI_MAX_WINDOW_MINUTES ?? 60);
 const LOKI_DEFAULT_WINDOW_MINUTES = Number(process.env.LOKI_DEFAULT_WINDOW_MINUTES ?? 15);
-const LOKI_MAX_LINES_CAP = Number(process.env.LOKI_MAX_LINES_CAP ?? 2_000);
-const LOKI_MAX_RESPONSE_BYTES = Number(process.env.LOKI_MAX_RESPONSE_BYTES ?? 2_000_000);
+const LOKI_MAX_LINES_CAP = Number(process.env.LOKI_MAX_LINES_CAP ?? MAX_LINES_CAP);
+const LOKI_MAX_RESPONSE_BYTES = Number(process.env.LOKI_MAX_RESPONSE_BYTES ?? MAX_COMMAND_BYTES);
 const LOKI_REQUIRE_SCOPE_LABELS =
   String(process.env.LOKI_REQUIRE_SCOPE_LABELS ?? 'true').trim().toLowerCase() !== 'false';
 
@@ -151,53 +153,153 @@ async function collectDockerLogs(input: AnalyzeLogsRequest): Promise<string> {
 function parseAllowedFilePaths(): Set<string> {
   return new Set(
     String(process.env.ALLOWED_LOG_FILES ?? '')
-      .split(',')
+      .trimEnd().split(',')
       .map((value) => value.trim())
       .filter(Boolean)
       .map((value) => path.resolve(value))
   );
 }
 
-export function getAllowedLogFileTargets(): string[] {
-  return Array.from(parseAllowedFilePaths()).sort((a, b) => a.localeCompare(b));
+function parseAllowedLokiSelectorsRaw(): string[] {
+  const raw = String(process.env.ALLOWED_LOKI_SELECTORS ?? '').trim();
+  if (!raw) {
+    return [];
+  }
+
+  if (raw.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed.map((v) => String(v).trim()).filter(Boolean);
+      }
+    } catch {
+      // fall back to plain parser
+    }
+  }
+
+  return raw
+    .split(/\n|;/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function parseSimpleSelector(selector: string): Map<string, string> {
+  const trimmed = selector.trim();
+
+  if (/\n|\r/.test(trimmed)) {
+    throw buildError(400, 'selector must be a single line');
+  }
+
+  if (/\||!=|=~|!~/.test(trimmed)) {
+    throw buildError(400, 'selector contains unsupported operators');
+  }
+
+  const match = trimmed.match(/^\{\s*([a-zA-Z_][a-zA-Z0-9_]*\s*=\s*"[^"\n\r]*"\s*(,\s*[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*"[^"\n\r]*"\s*)*)?\}$/);
+  if (!match) {
+    throw buildError(400, 'selector must be in format {key="value",key2="value2"}');
+  }
+
+  const inner = trimmed.slice(1, -1).trim();
+  const labels = new Map<string, string>();
+
+  if (!inner) {
+    return labels;
+  }
+
+  const pairPattern = /\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*"([^"\n\r]*)"\s*(?:,|$)/gy;
+
+  while (pairPattern.lastIndex < inner.length) {
+    const pairMatch = pairPattern.exec(inner);
+    if (!pairMatch) {
+      throw buildError(400, 'selector contains invalid label pair');
+    }
+
+    const [, key, value] = pairMatch;
+    labels.set(key, value);
+  }
+
+  return labels;
+}
+
+function normalizeSelector(selector: string): string {
+  const labels = parseSimpleSelector(selector);
+  const ordered = Array.from(labels.entries()).sort(([a], [b]) => a.localeCompare(b));
+  return `{${ordered.map(([key, value]) => `${key}="${value}"`).join(',')}}`;
+}
+
+function isSupersetSelector(candidate: Map<string, string>, base: Map<string, string>): boolean {
+  for (const [key, value] of base.entries()) {
+    if (candidate.get(key) !== value) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function isLokiEnabled(): boolean {
+  return Boolean(LOKI_BASE_URL);
+}
+
+export function getAllowedLokiSelectors(): string[] {
+  return parseAllowedLokiSelectorsRaw().map(normalizeSelector).sort((a, b) => a.localeCompare(b));
 }
 
 export function getLokiSyntheticTargets(): string[] {
-  return [];
+  return getAllowedLokiSelectors().map((selector) => `loki:${selector}`);
 }
 
-export function getLogCollectorLimits(): {
-  maxHours: number;
-  maxLinesCap: number;
-  maxFileBytes: number;
-  maxCommandBytes: number;
-  collectionTimeoutMs: number;
-  loki: {
-    enabled: boolean;
-    timeoutMs: number;
-    maxWindowMinutes: number;
-    defaultWindowMinutes: number;
-    maxLinesCap: number;
-    maxResponseBytes: number;
-    requireScopeLabels: boolean;
-  };
-} {
-  return {
-    maxHours: MAX_HOURS,
-    maxLinesCap: MAX_LINES_CAP,
-    maxFileBytes: MAX_FILE_BYTES,
-    maxCommandBytes: MAX_COMMAND_BYTES,
-    collectionTimeoutMs: LOG_COLLECTION_TIMEOUT_MS,
-    loki: {
-      enabled: Boolean(LOKI_BASE_URL),
-      timeoutMs: Math.max(100, Math.floor(LOKI_TIMEOUT_MS)),
-      maxWindowMinutes: Math.max(1, Math.floor(LOKI_MAX_WINDOW_MINUTES)),
-      defaultWindowMinutes: Math.max(1, Math.floor(LOKI_DEFAULT_WINDOW_MINUTES)),
-      maxLinesCap: Math.max(1, Math.floor(LOKI_MAX_LINES_CAP)),
-      maxResponseBytes: Math.max(1_000, Math.floor(LOKI_MAX_RESPONSE_BYTES)),
-      requireScopeLabels: LOKI_REQUIRE_SCOPE_LABELS
+export function validateAllowedLokiSelector(selector: string): string {
+  if (!isLokiEnabled()) {
+    throw buildError(503, 'loki source is disabled (set LOKI_BASE_URL)');
+  }
+
+  const normalized = normalizeSelector(selector);
+  const candidate = parseSimpleSelector(normalized);
+  const allowed = getAllowedLokiSelectors();
+
+  if (allowed.length === 0) {
+    throw buildError(503, 'loki source is enabled but ALLOWED_LOKI_SELECTORS is empty');
+  }
+
+  const permitted = allowed.some((allowedSelector) => {
+    const base = parseSimpleSelector(allowedSelector);
+    return isSupersetSelector(candidate, base);
+  });
+
+  if (!permitted) {
+    throw buildError(403, 'selector is not allowlisted');
+  }
+
+  return normalized;
+}
+
+function extractSelectorExpression(query: string): string {
+  const start = query.indexOf('{');
+  if (start < 0) {
+    throw buildError(400, 'Loki query must include a selector block');
+  }
+  let depth = 0;
+  for (let i = start; i < query.length; i += 1) {
+    const ch = query[i];
+    if (ch === '{') {
+      depth += 1;
+    } else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        return query.slice(start, i + 1);
+      }
     }
-  };
+  }
+  throw buildError(400, 'Loki query contains an unclosed selector block');
+}
+
+function ensureAllowlistedSelectorFromQuery(query: string): void {
+  const allowed = getAllowedLokiSelectors();
+  if (!allowed.length) {
+    return;
+  }
+  const selector = extractSelectorExpression(query);
+  validateAllowedLokiSelector(selector);
 }
 
 function escapeLogQLLabelValue(input: string): string {
@@ -217,6 +319,10 @@ function hasScopeLabelsInFilters(filters: Record<string, string>): boolean {
 }
 
 export function buildEffectiveLokiQuery(input: AnalyzeLogsBatchLokiRequest): string {
+  if (input.source !== 'loki') {
+    throw buildError(400, 'source must be loki');
+  }
+
   if (typeof input.query === 'string' && input.query.trim().length > 0) {
     return input.query.trim();
   }
@@ -263,8 +369,8 @@ export function resolveLokiTimeRange(input: {
     throw buildError(400, 'start must be earlier than end');
   }
 
-  const windowMinutes = (endDate.getTime() - startDate.getTime()) / 60_000;
   const maxWindowMinutes = Math.max(1, Math.floor(LOKI_MAX_WINDOW_MINUTES));
+  const windowMinutes = (endDate.getTime() - startDate.getTime()) / 60_000;
   if (windowMinutes > maxWindowMinutes) {
     throw buildError(400, `Loki time window exceeds ${String(maxWindowMinutes)} minutes`);
   }
@@ -287,14 +393,136 @@ function formatStreamLabels(labels: Record<string, string>): string {
   return entries.map(([key, value]) => `${key}=${value}`).join(',');
 }
 
+function headersWithAuth(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (LOKI_TENANT_ID) {
+    headers['X-Scope-OrgID'] = LOKI_TENANT_ID;
+  }
+  if (LOKI_AUTH_BEARER) {
+    headers.Authorization = `Bearer ${LOKI_AUTH_BEARER}`;
+  }
+  return headers;
+}
+
+export async function checkLokiHealth(): Promise<{ enabled: boolean; ok: boolean; status: number; details: string }> {
+  if (!isLokiEnabled()) {
+    return {
+      enabled: false,
+      ok: false,
+      status: 503,
+      details: 'loki is disabled: set LOKI_BASE_URL'
+    };
+  }
+
+  try {
+    const response = await fetch(`${LOKI_BASE_URL}/ready`, {
+      headers: headersWithAuth()
+    });
+
+    return {
+      enabled: true,
+      ok: response.ok,
+      status: response.status,
+      details: response.ok ? 'loki is ready' : `loki readiness check failed with status ${response.status}`
+    };
+  } catch (error: unknown) {
+    return {
+      enabled: true,
+      ok: false,
+      status: 502,
+      details: error instanceof Error ? error.message : 'failed to reach loki'
+    };
+  }
+}
+
+export async function collectLokiLogs(input: {
+  selector: string;
+  hours?: number;
+  sinceMinutes?: number;
+  maxLines: number;
+}): Promise<string> {
+  if (!isLokiEnabled()) {
+    throw buildError(503, 'loki source is disabled (set LOKI_BASE_URL)');
+  }
+
+  const selector = validateAllowedLokiSelector(input.selector);
+  const safeMaxLines = clampMaxLines(input.maxLines);
+
+  let windowMs = clampHours(input.hours ?? 6) * 60 * 60 * 1000;
+  if (typeof input.sinceMinutes === 'number') {
+    if (!Number.isInteger(input.sinceMinutes) || input.sinceMinutes <= 0) {
+      throw buildError(400, 'sinceMinutes must be a positive integer');
+    }
+
+    windowMs = Math.min(input.sinceMinutes * 60 * 1000, MAX_HOURS * 60 * 60 * 1000);
+  }
+
+  const nowNs = BigInt(Date.now()) * 1_000_000n;
+  const startNs = nowNs - BigInt(windowMs) * 1_000_000n;
+
+  const url = new URL(`${LOKI_BASE_URL}/loki/api/v1/query_range`);
+  url.searchParams.set('query', selector);
+  url.searchParams.set('start', startNs.toString());
+  url.searchParams.set('end', nowNs.toString());
+  // Query newest-first so limit captures the latest incidents under high-volume streams.
+  url.searchParams.set('direction', 'backward');
+  url.searchParams.set('limit', String(safeMaxLines));
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: headersWithAuth(),
+      signal: AbortSignal.timeout(LOG_COLLECTION_TIMEOUT_MS)
+    });
+  } catch (error: unknown) {
+    if (error instanceof DOMException && error.name === 'TimeoutError') {
+      throw buildError(504, 'loki query timed out');
+    }
+    throw buildError(502, `failed to query loki: ${error instanceof Error ? error.message : 'unknown error'}`);
+  }
+
+  if (!response.ok) {
+    throw buildError(502, `loki query failed with status ${response.status}`);
+  }
+
+  const payload = await response.json() as {
+    status?: string;
+    data?: {
+      resultType?: string;
+      result?: Array<{
+        stream?: Record<string, string>;
+        values?: Array<[string, string]>;
+      }>;
+    };
+  };
+
+  if (payload.status !== 'success' || !payload.data || payload.data.resultType !== 'streams') {
+    throw buildError(502, 'invalid loki response payload');
+  }
+
+  const merged: Array<{ ts: bigint; line: string }> = [];
+
+  for (const stream of payload.data.result ?? []) {
+    for (const value of stream.values ?? []) {
+      const [tsRaw, line] = value;
+      const ts = BigInt(tsRaw);
+      merged.push({ ts, line: String(line ?? '') });
+    }
+  }
+
+  merged.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
+
+  return merged.slice(-safeMaxLines).map((entry) => entry.line).join('\n');
+}
+
 export async function queryLokiRange(input: {
   query: string;
   startNs: string;
   endNs: string;
   limit: number;
 }): Promise<string> {
-  if (!LOKI_BASE_URL) {
-    throw buildError(500, 'LOKI_BASE_URL is required when source=loki');
+  if (!isLokiEnabled()) {
+    throw buildError(503, 'loki source is disabled (set LOKI_BASE_URL)');
   }
 
   const safeLimit = clampLokiLimit(input.limit);
@@ -302,14 +530,14 @@ export async function queryLokiRange(input: {
   const timeout = setTimeout(() => controller.abort(), Math.max(100, Math.floor(LOKI_TIMEOUT_MS)));
 
   try {
-    const queryRangeUrl = new URL('/loki/api/v1/query_range', LOKI_BASE_URL);
+    const queryRangeUrl = new URL(`${LOKI_BASE_URL}/loki/api/v1/query_range`);
     queryRangeUrl.searchParams.set('query', input.query);
     queryRangeUrl.searchParams.set('start', input.startNs);
     queryRangeUrl.searchParams.set('end', input.endNs);
     queryRangeUrl.searchParams.set('limit', String(safeLimit));
 
-    const response = await fetch(queryRangeUrl.toString(), {
-      method: 'GET',
+    const response = await fetch(queryRangeUrl, {
+      headers: headersWithAuth(),
       signal: controller.signal
     });
 
@@ -348,15 +576,7 @@ export async function queryLokiRange(input: {
       }
     }
 
-    flattened.sort((a, b) => {
-      if (a.ts < b.ts) {
-        return -1;
-      }
-      if (a.ts > b.ts) {
-        return 1;
-      }
-      return 0;
-    });
+    flattened.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
 
     const selected = flattened.slice(-safeLimit);
     const maxBytes = Math.max(1_000, Math.floor(LOKI_MAX_RESPONSE_BYTES));
@@ -399,20 +619,64 @@ export async function collectLokiBatchLogs(input: AnalyzeLogsBatchLokiRequest): 
   limit: number;
   hours: number;
 }> {
+  if (input.source !== 'loki') {
+    throw buildError(400, 'source must be loki');
+  }
+
   const query = buildEffectiveLokiQuery(input);
   enforceScopeGuard(input, query);
+  ensureAllowlistedSelectorFromQuery(query);
   const { startNs, endNs, hours } = resolveLokiTimeRange({
     start: input.start,
     end: input.end
   });
-  const limit = clampLokiLimit(input.limit);
+  const limit = clampLokiLimit(input.limit ?? 2_000);
   const logs = await queryLokiRange({
     query,
     startNs,
     endNs,
     limit
   });
+
   return { query, logs, limit, hours };
+}
+
+export function getAllowedLogFileTargets(): string[] {
+  return Array.from(parseAllowedFilePaths()).sort((a, b) => a.localeCompare(b));
+}
+
+export function getLogCollectorLimits(): {
+  maxHours: number;
+  maxLinesCap: number;
+  maxFileBytes: number;
+  maxCommandBytes: number;
+  collectionTimeoutMs: number;
+  loki: {
+    enabled: boolean;
+    timeoutMs: number;
+    maxWindowMinutes: number;
+    defaultWindowMinutes: number;
+    maxLinesCap: number;
+    maxResponseBytes: number;
+    requireScopeLabels: boolean;
+  };
+} {
+  return {
+    maxHours: MAX_HOURS,
+    maxLinesCap: MAX_LINES_CAP,
+    maxFileBytes: MAX_FILE_BYTES,
+    maxCommandBytes: MAX_COMMAND_BYTES,
+    collectionTimeoutMs: LOG_COLLECTION_TIMEOUT_MS,
+    loki: {
+      enabled: isLokiEnabled(),
+      timeoutMs: Math.max(100, Math.floor(LOKI_TIMEOUT_MS)),
+      maxWindowMinutes: Math.max(1, Math.floor(LOKI_MAX_WINDOW_MINUTES)),
+      defaultWindowMinutes: Math.max(1, Math.floor(LOKI_DEFAULT_WINDOW_MINUTES)),
+      maxLinesCap: Math.max(1, Math.floor(LOKI_MAX_LINES_CAP)),
+      maxResponseBytes: Math.max(1_000, Math.floor(LOKI_MAX_RESPONSE_BYTES)),
+      requireScopeLabels: LOKI_REQUIRE_SCOPE_LABELS
+    }
+  };
 }
 
 export type IncrementalFileLogsResult = {
@@ -445,7 +709,6 @@ export async function collectFileLogsIncremental(input: {
     let fromCursor = Math.min(requestedCursor, size);
     let rotated = false;
 
-    // If file rotated/truncated and cursor is beyond current file size, restart at 0.
     if (requestedCursor > size) {
       fromCursor = 0;
       rotated = true;
@@ -483,7 +746,7 @@ export async function collectFileLogsIncremental(input: {
     }
 
     const text = Buffer.concat(chunks).toString('utf8');
-    const lines = text.split(/\r?\n/);
+    const lines = text.trimEnd().split(/\r?\n/);
     const logs = lines.slice(-safeMaxLines).join('\n');
 
     return {
@@ -508,7 +771,6 @@ async function collectFileLogs(input: AnalyzeLogsRequest): Promise<string> {
   }
 
   await access(requestedPath, constants.R_OK);
-  // Read only from the file tail so large logs can still be analyzed safely.
   const handle = await openFile(requestedPath, 'r');
   try {
     const stat = await handle.stat();
@@ -536,7 +798,7 @@ async function collectFileLogs(input: AnalyzeLogsRequest): Promise<string> {
     }
 
     const tailText = Buffer.concat(chunks).toString('utf8');
-    const lines = tailText.split(/\r?\n/);
+    const lines = tailText.trimEnd().split(/\r?\n/);
     return lines.slice(-safeMaxLines).join('\n');
   } finally {
     await handle.close();
@@ -544,7 +806,7 @@ async function collectFileLogs(input: AnalyzeLogsRequest): Promise<string> {
 }
 
 export async function collectLogs(input: AnalyzeLogsRequest): Promise<string> {
-  if (input.source === 'journalctl') {
+  if (input.source === 'journalctl' || input.source === 'journald') {
     return collectJournalctlLogs(input);
   }
 
