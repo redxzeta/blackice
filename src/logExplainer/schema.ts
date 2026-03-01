@@ -40,8 +40,10 @@ export const AnalyzeLogsBatchRequestSchema = z
     query: z.string().min(1).max(4_000).optional(),
     filters: LokiFiltersSchema.optional(),
     contains: z.string().min(1).max(500).optional(),
+    regex: z.string().min(1).max(500).optional(),
     start: z.string().datetime({ offset: true }).optional(),
     end: z.string().datetime({ offset: true }).optional(),
+    sinceSeconds: z.number().int().positive().max(ANALYZE_MAX_HOURS * 60 * 60).optional(),
     limit: z.number().int().positive().max(LOKI_MAX_LIMIT_REQUEST).optional().default(2_000),
     allowUnscoped: z.boolean().optional().default(false),
     hours: z.number().positive().max(ANALYZE_MAX_HOURS).optional().default(6),
@@ -63,6 +65,14 @@ export const AnalyzeLogsBatchRequestSchema = z
         code: z.ZodIssueCode.custom,
         path: ['query'],
         message: 'provide only one of query or filters for source=loki'
+      });
+    }
+
+    if (value.sinceSeconds !== undefined && (value.start !== undefined || value.end !== undefined)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['sinceSeconds'],
+        message: 'provide either sinceSeconds or start/end for source=loki, not both'
       });
     }
   })
@@ -200,8 +210,10 @@ export type AnalyzeLogsBatchLokiRequest = {
   query?: string;
   filters?: Record<string, string>;
   contains?: string;
+  regex?: string;
   start?: string;
   end?: string;
+  sinceSeconds?: number;
   limit?: number;
   allowUnscoped?: boolean;
 };

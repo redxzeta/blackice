@@ -104,8 +104,8 @@ Example Loki batch request (structured filters):
     "job": "journald"
   },
   "contains": "request_id=...",
-  "start": "2026-03-01T04:00:00Z",
-  "end": "2026-03-01T04:15:00Z",
+  "regex": "error|timeout",
+  "sinceSeconds": 900,
   "limit": 2000
 }
 ```
@@ -165,6 +165,7 @@ Example batch response shape:
 - For `source: "file"`, target must be listed in `ALLOWED_LOG_FILES`.
 - For `source: "loki"`, at least one scoping label (`host` or `unit`) is required unless `allowUnscoped: true`.
 - For `source: "loki"`, default time window is last 15 minutes if `start`/`end` are omitted.
+- For `source: "loki"`, use either `sinceSeconds` or `start`/`end` (not both).
 - For `source: "loki"`, max time window is controlled by `LOKI_MAX_WINDOW_MINUTES` (default 60).
 - The service enforces read-only safety; unsafe command-like output is redacted before response.
 - This endpoint is separate from `/v1/chat/completions`; call it as a direct HTTP integration.
