@@ -93,3 +93,11 @@ export function sanitizeReadOnlyAnalysisOutput(analysis: string): {
     reasons: Array.from(reasons)
   };
 }
+
+export function sanitizeReadOnlyEvidenceLine(line: string): string {
+  const matched = FORBIDDEN_PATTERNS.find((pattern) => pattern.test(line));
+  if (!matched) {
+    return line;
+  }
+  return '[REDACTED unsafe content removed]';
+}

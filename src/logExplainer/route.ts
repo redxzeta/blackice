@@ -26,7 +26,11 @@ import {
 } from './logCollector.js';
 import { analyzeLogsWithOllama } from './ollamaClient.js';
 import { SYSTEM_PROMPT, buildUserPrompt, truncateLogs, type AnalyzePromptRequest } from './promptTemplates.js';
-import { ensureReadOnlyAnalysisOutput, sanitizeReadOnlyAnalysisOutput } from './outputSafety.js';
+import {
+  ensureReadOnlyAnalysisOutput,
+  sanitizeReadOnlyAnalysisOutput,
+  sanitizeReadOnlyEvidenceLine
+} from './outputSafety.js';
 import { errMessage, toHttpError } from '../http/errors.js';
 import { getRequestId } from '../http/requestLogging.js';
 import { parseBodyOrRespond } from '../http/validation.js';
@@ -41,6 +45,39 @@ type AnalysisResult = {
     reasons: string[];
   };
 };
+
+type EvidenceLine = {
+  ts: string;
+  line: string;
+};
+
+function buildEvidence(rawLogs: string, requestedLines: number | undefined): EvidenceLine[] | undefined {
+  if (requestedLines === undefined) {
+    return undefined;
+  }
+
+  const evidenceLines = Math.max(1, requestedLines);
+  const lines = rawLogs
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.length > 0)
+    .slice(-evidenceLines);
+
+  return lines.map((line) => {
+    const match = line.match(/^(\d{4}-\d{2}-\d{2}T[^\s]+)\s+(.*)$/);
+    if (match) {
+      return {
+        ts: match[1],
+        line: sanitizeReadOnlyEvidenceLine(match[2])
+      };
+    }
+
+    return {
+      ts: '',
+      line: sanitizeReadOnlyEvidenceLine(line)
+    };
+  });
+}
 
 function extractSelectorFromLokiTarget(target: string): string {
   if (!target.startsWith('loki:')) {
@@ -195,7 +232,8 @@ export function registerLogExplainerRoutes(app: Express): void {
             hours: 'number (optional)',
             sinceMinutes: 'number (optional; overrides hours for source=loki)',
             maxLines: 'number (optional)',
-            concurrency: 'number (optional)'
+            concurrency: 'number (optional)',
+            evidenceLines: 'number (optional; max 50; include evidence only when set)'
           },
           responseSchema: LogExplainerJsonSchemas.analyzeLogsBatchResponse
         },
@@ -307,6 +345,7 @@ export function registerLogExplainerRoutes(app: Express): void {
             result = {
               target: collected.query,
               ok: true,
+              evidence: buildEvidence(collected.logs, body.evidenceLines),
               logs: collected.logs,
               message: collected.logs.trim() ? 'Logs collected' : 'No logs collected (collect-only mode)'
             };
@@ -323,6 +362,7 @@ export function registerLogExplainerRoutes(app: Express): void {
             result = {
               target: collected.query,
               ok: true,
+              evidence: buildEvidence(collected.logs, body.evidenceLines),
               ...analysisResult
             };
           }
@@ -417,6 +457,7 @@ export function registerLogExplainerRoutes(app: Express): void {
             return {
               target,
               ok: true,
+              evidence: buildEvidence(rawLogs, body.evidenceLines),
               logs: rawLogs,
               message: rawLogs.trim() ? 'Logs collected' : 'No logs collected (collect-only mode)'
             };
@@ -436,6 +477,7 @@ export function registerLogExplainerRoutes(app: Express): void {
           return {
             target,
             ok: true,
+            evidence: buildEvidence(rawLogs, body.evidenceLines),
             ...analysisResult
           } as AnalyzeLogsBatchResultOk;
         } catch (error: unknown) {
