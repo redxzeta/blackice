@@ -113,6 +113,7 @@ curl -sS http://127.0.0.1:3000/analyze/logs/batch \
     "contains": "request_id=...",
     "start": "2026-03-01T04:00:00Z",
     "end": "2026-03-01T04:15:00Z",
+    "evidenceLines": 10,
     "limit": 2000
   }'
 ```
@@ -121,7 +122,13 @@ curl -sS http://127.0.0.1:3000/analyze/logs/batch \
 
 ```json
 {
-  "analysis": "## Summary\nRepeated failed SSH authentication attempts were detected...\n\n## Key Findings\n- ..."
+  "analysis": "## Summary\nRepeated failed SSH authentication attempts were detected...\n\n## Key Findings\n- ...",
+  "evidence": [
+    {
+      "ts": "2026-03-01T04:07:12.001Z",
+      "line": "request_id=openclaw-123 upstream timeout"
+    }
+  ]
 }
 ```
 

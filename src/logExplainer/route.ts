@@ -3,6 +3,7 @@ import { log } from '../log.js';
 import {
   AnalyzeLogsBatchRequestSchema,
   AnalyzeLogsBatchResponseSchema,
+  BATCH_EVIDENCE_LINES_DEFAULT,
   AnalyzeLogsIncrementalRequestSchema,
   AnalyzeLogsIncrementalResponseSchema,
   AnalyzeLogsRequestSchema,
@@ -26,7 +27,11 @@ import {
 } from './logCollector.js';
 import { analyzeLogsWithOllama } from './ollamaClient.js';
 import { SYSTEM_PROMPT, buildUserPrompt, truncateLogs, type AnalyzePromptRequest } from './promptTemplates.js';
-import { ensureReadOnlyAnalysisOutput, sanitizeReadOnlyAnalysisOutput } from './outputSafety.js';
+import {
+  ensureReadOnlyAnalysisOutput,
+  sanitizeReadOnlyAnalysisOutput,
+  sanitizeReadOnlyEvidenceLine
+} from './outputSafety.js';
 import { errMessage, toHttpError } from '../http/errors.js';
 import { getRequestId } from '../http/requestLogging.js';
 import { parseBodyOrRespond } from '../http/validation.js';
@@ -41,6 +46,35 @@ type AnalysisResult = {
     reasons: string[];
   };
 };
+
+type EvidenceLine = {
+  ts: string;
+  line: string;
+};
+
+function buildEvidence(rawLogs: string, requestedLines: number | undefined): EvidenceLine[] {
+  const evidenceLines = Math.max(1, requestedLines ?? BATCH_EVIDENCE_LINES_DEFAULT);
+  const lines = rawLogs
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.length > 0)
+    .slice(-evidenceLines);
+
+  return lines.map((line) => {
+    const match = line.match(/^(\d{4}-\d{2}-\d{2}T[^\s]+)\s+(.*)$/);
+    if (match) {
+      return {
+        ts: match[1],
+        line: sanitizeReadOnlyEvidenceLine(match[2])
+      };
+    }
+
+    return {
+      ts: '',
+      line: sanitizeReadOnlyEvidenceLine(line)
+    };
+  });
+}
 
 function extractSelectorFromLokiTarget(target: string): string {
   if (!target.startsWith('loki:')) {
@@ -195,7 +229,8 @@ export function registerLogExplainerRoutes(app: Express): void {
             hours: 'number (optional)',
             sinceMinutes: 'number (optional; overrides hours for source=loki)',
             maxLines: 'number (optional)',
-            concurrency: 'number (optional)'
+            concurrency: 'number (optional)',
+            evidenceLines: 'number (optional; default 10, max 50)'
           },
           responseSchema: LogExplainerJsonSchemas.analyzeLogsBatchResponse
         },
@@ -307,6 +342,7 @@ export function registerLogExplainerRoutes(app: Express): void {
             result = {
               target: collected.query,
               ok: true,
+              evidence: buildEvidence(collected.logs, body.evidenceLines),
               logs: collected.logs,
               message: collected.logs.trim() ? 'Logs collected' : 'No logs collected (collect-only mode)'
             };
@@ -323,6 +359,7 @@ export function registerLogExplainerRoutes(app: Express): void {
             result = {
               target: collected.query,
               ok: true,
+              evidence: buildEvidence(collected.logs, body.evidenceLines),
               ...analysisResult
             };
           }
@@ -417,6 +454,7 @@ export function registerLogExplainerRoutes(app: Express): void {
             return {
               target,
               ok: true,
+              evidence: buildEvidence(rawLogs, body.evidenceLines),
               logs: rawLogs,
               message: rawLogs.trim() ? 'Logs collected' : 'No logs collected (collect-only mode)'
             };
@@ -436,6 +474,7 @@ export function registerLogExplainerRoutes(app: Express): void {
           return {
             target,
             ok: true,
+            evidence: buildEvidence(rawLogs, body.evidenceLines),
             ...analysisResult
           } as AnalyzeLogsBatchResultOk;
         } catch (error: unknown) {
