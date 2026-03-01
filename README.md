@@ -260,6 +260,19 @@ curl -sS http://127.0.0.1:3000/analyze/logs/batch \
   }'
 ```
 
+Loki batch raw mode (evidence only, no model invocation):
+```bash
+curl -sS http://127.0.0.1:3000/analyze/logs/batch \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "source": "loki",
+    "filters": {"job":"journald","host":"owonto"},
+    "contains": "request_id=",
+    "mode": "raw",
+    "evidenceLines": 10
+  }'
+```
+
 Recent API logs:
 ```bash
 curl -sS "http://127.0.0.1:3000/logs/recent?limit=100"

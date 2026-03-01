@@ -107,6 +107,20 @@ curl -sS http://127.0.0.1:3000/analyze/logs/batch \
     "source": "loki",
     "filters": {
       "job": "journald",
+      "host": "owonto"
+    },
+    "mode": "raw",
+    "evidenceLines": 10
+  }'
+```
+
+```bash
+curl -sS http://127.0.0.1:3000/analyze/logs/batch \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "source": "loki",
+    "filters": {
+      "job": "journald",
       "host": "owonto",
       "unit": "blackice-router.service"
     },
@@ -121,7 +135,13 @@ curl -sS http://127.0.0.1:3000/analyze/logs/batch \
 
 ```json
 {
-  "analysis": "## Summary\nRepeated failed SSH authentication attempts were detected...\n\n## Key Findings\n- ..."
+  "analysis": "## Summary\nRepeated failed SSH authentication attempts were detected...\n\n## Key Findings\n- ...",
+  "evidence": [
+    {
+      "ts": "2026-03-01T04:07:12.001Z",
+      "line": "request_id=openclaw-123 upstream timeout"
+    }
+  ]
 }
 ```
 
