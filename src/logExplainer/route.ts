@@ -18,6 +18,7 @@ import {
   checkLokiHealth,
   collectFileLogsIncremental,
   collectLogs,
+  collectLokiBatchLogs,
   collectLokiLogs,
   getAllowedLogFileTargets,
   getLokiSyntheticTargets,
@@ -184,6 +185,13 @@ export function registerLogExplainerRoutes(app: Express): void {
             source: 'file | journald | loki',
             targets: 'string[] (optional; file paths, journald units, or synthetic loki:{...} targets)',
             selectors: 'string[] (optional; direct Loki selectors when source=loki)',
+            query: 'string (optional; raw LogQL for source=loki)',
+            filters: 'record<string,string> (optional; source=loki selector labels)',
+            contains: 'string (optional; source=loki line filter)',
+            start: 'ISO-8601 datetime (optional; source=loki)',
+            end: 'ISO-8601 datetime (optional; source=loki)',
+            limit: 'number (optional; source=loki)',
+            allowUnscoped: 'boolean (optional; source=loki)',
             hours: 'number (optional)',
             sinceMinutes: 'number (optional; overrides hours for source=loki)',
             maxLines: 'number (optional)',
@@ -270,6 +278,75 @@ export function registerLogExplainerRoutes(app: Express): void {
       }
 
       const source = body.source;
+
+      if (
+        source === 'loki' &&
+        ((typeof body.query === 'string' && body.query.trim().length > 0) || body.filters !== undefined)
+      ) {
+        const lokiRequest = {
+          source: 'loki' as const,
+          query: body.query,
+          filters: body.filters,
+          contains: body.contains,
+          start: body.start,
+          end: body.end,
+          limit: body.limit,
+          allowUnscoped: body.allowUnscoped
+        };
+        let fallbackTarget = 'loki';
+        if (typeof body.query === 'string' && body.query.trim().length > 0) {
+          fallbackTarget = body.query.trim();
+        }
+        let result: AnalyzeLogsBatchResultOk | AnalyzeLogsBatchResultError;
+        try {
+          const collected = await collectLokiBatchLogs(lokiRequest);
+          fallbackTarget = collected.query;
+          const shouldAnalyze = body.analyze !== false && body.collectOnly !== true;
+
+          if (!shouldAnalyze) {
+            result = {
+              target: collected.query,
+              ok: true,
+              logs: collected.logs,
+              message: collected.logs.trim() ? 'Logs collected' : 'No logs collected (collect-only mode)'
+            };
+          } else {
+            const analysisRequest: AnalyzePromptRequest = {
+              source: 'loki',
+              target: collected.query,
+              hours: collected.hours,
+              maxLines: collected.limit,
+              analyze: body.analyze,
+              collectOnly: body.collectOnly
+            };
+            const analysisResult = await analyzeFromRawLogs(analysisRequest, collected.logs);
+            result = {
+              target: collected.query,
+              ok: true,
+              ...analysisResult
+            };
+          }
+        } catch (error: unknown) {
+          const httpError = toHttpError(error);
+          result = {
+            target: fallbackTarget,
+            ok: false,
+            error: errMessage(httpError),
+            status: httpError.status
+          };
+        }
+
+        const bodyOut = AnalyzeLogsBatchResponseSchema.parse({
+          source: 'loki',
+          requestedTargets: 1,
+          analyzedTargets: 1,
+          ok: result.ok ? 1 : 0,
+          failed: result.ok ? 0 : 1,
+          results: [result]
+        });
+        res.status(200).json(bodyOut);
+        return;
+      }
 
       let candidateTargets: string[];
       let targets: string[];

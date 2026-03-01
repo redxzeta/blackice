@@ -28,7 +28,8 @@ export function buildLogExplainerStatus() {
       maxLinesRequest: ANALYZE_MAX_LINES_REQUEST,
       maxLinesEffectiveCap: collectorLimits.maxLinesCap,
       batchConcurrencyMin: BATCH_CONCURRENCY_MIN,
-      batchConcurrencyMax: BATCH_CONCURRENCY_MAX
+      batchConcurrencyMax: BATCH_CONCURRENCY_MAX,
+      loki: collectorLimits.loki
     },
     targets: {
       count: targets.length,

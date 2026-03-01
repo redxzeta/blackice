@@ -105,6 +105,12 @@ Security controls:
 - `ALLOWED_LOKI_SELECTORS` (newline or semicolon separated selectors, or JSON array)
 - `LOKI_TENANT_ID` (optional tenant header `X-Scope-OrgID`)
 - `LOKI_AUTH_BEARER` (optional bearer auth token for Loki)
+- `LOKI_TIMEOUT_MS` (default `10000`; timeout for Loki `query_range`)
+- `LOKI_MAX_WINDOW_MINUTES` (default `60`; max `start`/`end` window for Loki query mode)
+- `LOKI_DEFAULT_WINDOW_MINUTES` (default `15`; default window when `start`/`end` omitted)
+- `LOKI_MAX_LINES_CAP` (default `2000`; cap for Loki query mode `limit`)
+- `LOKI_MAX_RESPONSE_BYTES` (default `2000000`; cap for Loki lines payload in query mode)
+- `LOKI_REQUIRE_SCOPE_LABELS` (default `true`; requires `host` or `unit` in query mode unless `allowUnscoped=true`)
 - `MAX_QUERY_HOURS` (max log query lookback window)
 - `MAX_LINES` (effective cap for collected lines)
 - `MAX_CONCURRENCY` (max allowed batch concurrency)
@@ -226,6 +232,31 @@ curl -sS http://127.0.0.1:3000/analyze/logs/batch \
     "targets": ["loki:{job=\"openclaw\",host=\"uwuntu\"}"],
     "hours": 1,
     "maxLines": 300
+  }'
+```
+
+Loki batch analysis route (raw query mode):
+```bash
+curl -sS http://127.0.0.1:3000/analyze/logs/batch \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "source": "loki",
+    "query": "{job=\"journald\",host=\"owonto\",unit=\"blackice-router.service\"} |= \"request_id=\"",
+    "start": "2026-03-01T04:00:00Z",
+    "end": "2026-03-01T04:15:00Z",
+    "limit": 500
+  }'
+```
+
+Loki batch analysis route (structured filters mode):
+```bash
+curl -sS http://127.0.0.1:3000/analyze/logs/batch \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "source": "loki",
+    "filters": {"job":"journald","host":"owonto","unit":"blackice-router.service"},
+    "contains": "request_id=",
+    "limit": 500
   }'
 ```
 
