@@ -67,6 +67,14 @@ export const AnalyzeLogsBatchRequestSchema = z
         message: 'provide only one of query or filters for source=loki'
       });
     }
+
+    if (value.sinceSeconds !== undefined && (value.start !== undefined || value.end !== undefined)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['sinceSeconds'],
+        message: 'provide either sinceSeconds or start/end for source=loki, not both'
+      });
+    }
   })
   .strict();
 
