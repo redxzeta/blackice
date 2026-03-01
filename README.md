@@ -100,7 +100,6 @@ Security controls:
 - `ACTIONS_ENABLED` (`true`/`false`, default `true`)
 - `LOG_LEVEL` (`info`/`debug`, default `info`)
 - `ALLOWLIST_LOG_PATHS` (comma-separated absolute files or directories)
-- `ALLOWED_LOG_FILES` (comma-separated absolute files for `source: "file"` in `/analyze/logs`)
 - `LOKI_BASE_URL` (enables Loki log source for `/analyze/logs/batch` when set)
 - `LOKI_RULES_FILE` (required path to YAML rules file when `LOKI_BASE_URL` is set)
 - `LOKI_TENANT_ID` (optional tenant header `X-Scope-OrgID`)

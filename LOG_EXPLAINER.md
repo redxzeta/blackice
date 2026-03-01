@@ -19,14 +19,12 @@ LOKI_MAX_LINES_CAP=2000 \
 LOKI_MAX_RESPONSE_BYTES=2000000 \
 LOKI_REQUIRE_SCOPE_LABELS=true \
 LOKI_RULES_FILE=./config/loki-rules.yaml \
-ALLOWED_LOG_FILES=/var/log/syslog,/var/log/auth.log \
 npm start
 ```
 
 ## Endpoint
 
 `POST /analyze/logs`
-`POST /analyze/logs/incremental`
 `POST /analyze/logs/batch`
 `GET /analyze/logs/targets`
 `GET /analyze/logs/status`
@@ -69,37 +67,14 @@ curl -sS http://127.0.0.1:3000/analyze/logs/metadata
 ```
 
 ```bash
-curl -sS http://127.0.0.1:3000/analyze/logs/incremental \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "source": "file",
-    "target": "/var/log/remote/paperless-ngx.log",
-    "cursor": 0,
-    "hours": 6,
-    "maxLines": 300
-  }'
-```
-
-```bash
-curl -sS http://127.0.0.1:3000/analyze/logs/batch \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "source": "file",
-    "hours": 6,
-    "maxLines": 300,
-    "concurrency": 2
-  }'
-```
-
-```bash
 curl -sS http://127.0.0.1:3000/analyze/logs/batch \
   -H 'Content-Type: application/json' \
   -d '{
     "source": "loki",
     "filters": {
       "job": "journald",
-      "host": "owonto",
-      "unit": "blackice-router.service"
+    "host": "owonto",
+    "unit": "blackice-router.service"
     },
     "contains": "request_id=...",
     "start": "2026-03-01T04:00:00Z",
@@ -118,12 +93,12 @@ curl -sS http://127.0.0.1:3000/analyze/logs/batch \
 
 ## Safety controls
 
-- Uses only read-only collectors: `journalctl`, `docker logs`, and explicit allowlisted files.
+- Uses only read-only collectors: `journalctl`, `docker logs`, and Loki query_range.
 - Loki source is read-only via `/loki/api/v1/query_range`.
 - Loki selectors are constructed internally from validated `filters` (raw `query` and selector strings are rejected).
 - Loki allowlist rules are loaded from `LOKI_RULES_FILE` YAML.
 - No shell mode execution (`spawn` with `shell: false`).
-- Command and file output byte caps are enforced.
+- Command output byte caps are enforced.
 - Loki guards: default 15-minute window, max window (default 60 minutes), max line cap, max response bytes, and scoped-label requirement (`host` or `unit`) unless `allowUnscoped: true`.
 - LLM output is policy-checked; unsafe command-like content is redacted with a safety note.
 - No file writes, no delete operations, no remediation commands.

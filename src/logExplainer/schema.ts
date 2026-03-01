@@ -23,7 +23,7 @@ const LokiFiltersSchema = z
 
 export const AnalyzeLogsRequestSchema = z
   .object({
-    source: z.enum(['journalctl', 'journald', 'docker', 'file']),
+    source: z.enum(['journalctl', 'journald', 'docker']),
     target: z.string().min(1).max(300),
     hours: z.number().positive().max(ANALYZE_MAX_HOURS),
     maxLines: z.number().int().positive().max(ANALYZE_MAX_LINES_REQUEST),
@@ -34,7 +34,7 @@ export const AnalyzeLogsRequestSchema = z
 
 export const AnalyzeLogsBatchRequestSchema = z
   .object({
-    source: z.enum(['file', 'journald', 'loki']).optional().default('file'),
+    source: z.enum(['journald', 'loki']),
     targets: z.array(z.string().min(1).max(600)).optional(),
     selectors: z.array(z.string().min(1).max(600)).optional(),
     query: z.string().min(1).max(4_000).optional(),
@@ -95,16 +95,6 @@ export const AnalyzeLogsBatchRequestSchema = z
   })
   .strict();
 
-export const AnalyzeLogsIncrementalRequestSchema = z
-  .object({
-    source: z.literal('file').optional().default('file'),
-    target: z.string().min(1).max(300),
-    cursor: z.number().int().nonnegative().optional().default(0),
-    hours: z.number().positive().max(ANALYZE_MAX_HOURS).optional().default(6),
-    maxLines: z.number().int().positive().max(ANALYZE_MAX_LINES_REQUEST).optional().default(300)
-  })
-  .strict();
-
 export const AnalyzeLogsTargetsResponseSchema = z
   .object({
     targets: z.array(z.string())
@@ -158,7 +148,7 @@ export const AnalyzeLogsBatchResultSchema = z.discriminatedUnion('ok', [
 
 export const AnalyzeLogsBatchResponseSchema = z
   .object({
-    source: z.enum(['file', 'journald', 'loki']),
+    source: z.enum(['journald', 'loki']),
     requestedTargets: z.number().int().nonnegative(),
     analyzedTargets: z.number().int().nonnegative(),
     ok: z.number().int().nonnegative(),
@@ -200,26 +190,6 @@ export const AnalyzeLogsStatusResponseSchema = z
   })
   .strict();
 
-export const AnalyzeLogsIncrementalResponseSchema = z
-  .object({
-    source: z.literal('file'),
-    target: z.string(),
-    cursor: z.number().int().nonnegative(),
-    fromCursor: z.number().int().nonnegative(),
-    nextCursor: z.number().int().nonnegative(),
-    rotated: z.boolean(),
-    truncatedByBytes: z.boolean(),
-    noNewLogs: z.boolean(),
-    analysis: z.string().optional(),
-    safety: z
-      .object({
-        redacted: z.boolean(),
-        reasons: z.array(z.string())
-      })
-      .optional()
-  })
-  .strict();
-
 export type AnalyzeLogsRequest = z.infer<typeof AnalyzeLogsRequestSchema>;
 export type AnalyzeLogsBatchRequest = z.infer<typeof AnalyzeLogsBatchRequestSchema>;
 export type AnalyzeLogsBatchLokiRequest = {
@@ -232,14 +202,12 @@ export type AnalyzeLogsBatchLokiRequest = {
   limit?: number;
   allowUnscoped?: boolean;
 };
-export type AnalyzeLogsIncrementalRequest = z.infer<typeof AnalyzeLogsIncrementalRequestSchema>;
 export type AnalyzeLogsTargetsResponse = z.infer<typeof AnalyzeLogsTargetsResponseSchema>;
 export type AnalyzeLogsResponse = z.infer<typeof AnalyzeLogsResponseSchema>;
 export type AnalyzeLogsBatchResultOk = z.infer<typeof AnalyzeLogsBatchResultOkSchema>;
 export type AnalyzeLogsBatchResultError = z.infer<typeof AnalyzeLogsBatchResultErrorSchema>;
 export type AnalyzeLogsBatchResponse = z.infer<typeof AnalyzeLogsBatchResponseSchema>;
 export type AnalyzeLogsStatusResponse = z.infer<typeof AnalyzeLogsStatusResponseSchema>;
-export type AnalyzeLogsIncrementalResponse = z.infer<typeof AnalyzeLogsIncrementalResponseSchema>;
 
 export const LogExplainerJsonSchemas = {
   analyzeLogsTargetsResponse: {
@@ -276,7 +244,7 @@ export const LogExplainerJsonSchemas = {
     type: 'object',
     required: ['source', 'requestedTargets', 'analyzedTargets', 'ok', 'failed', 'results'],
     properties: {
-      source: { enum: ['file', 'journald', 'loki'] },
+      source: { enum: ['journald', 'loki'] },
       requestedTargets: { type: 'integer', minimum: 0 },
       analyzedTargets: { type: 'integer', minimum: 0 },
       ok: { type: 'integer', minimum: 0 },
@@ -320,40 +288,6 @@ export const LogExplainerJsonSchemas = {
             }
           ]
         }
-      }
-    },
-    additionalProperties: false
-  },
-  analyzeLogsIncrementalResponse: {
-    type: 'object',
-    required: [
-      'source',
-      'target',
-      'cursor',
-      'fromCursor',
-      'nextCursor',
-      'rotated',
-      'truncatedByBytes',
-      'noNewLogs'
-    ],
-    properties: {
-      source: { const: 'file' },
-      target: { type: 'string' },
-      cursor: { type: 'integer', minimum: 0 },
-      fromCursor: { type: 'integer', minimum: 0 },
-      nextCursor: { type: 'integer', minimum: 0 },
-      rotated: { type: 'boolean' },
-      truncatedByBytes: { type: 'boolean' },
-      noNewLogs: { type: 'boolean' },
-      analysis: { type: 'string' },
-      safety: {
-        type: 'object',
-        required: ['redacted', 'reasons'],
-        properties: {
-          redacted: { type: 'boolean' },
-          reasons: { type: 'array', items: { type: 'string' } }
-        },
-        additionalProperties: false
       }
     },
     additionalProperties: false

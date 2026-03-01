@@ -1,13 +1,11 @@
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { access, constants, open as openFile } from 'node:fs/promises';
 import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import type { AnalyzeLogsBatchLokiRequest, AnalyzeLogsRequest } from './schema.js';
 
 const LOG_COLLECTION_TIMEOUT_MS = Number(process.env.LOG_COLLECTION_TIMEOUT_MS ?? 15_000);
 const MAX_COMMAND_BYTES = Number(process.env.MAX_COMMAND_BYTES ?? 2_000_000);
-const MAX_FILE_BYTES = Number(process.env.MAX_FILE_BYTES ?? 2_000_000);
 const MAX_HOURS = Number(process.env.MAX_QUERY_HOURS ?? process.env.MAX_HOURS ?? 168);
 const MAX_LINES_CAP = Number(process.env.MAX_LINES ?? process.env.MAX_LINES_CAP ?? 2_000);
 const LOKI_BASE_URL = String(process.env.LOKI_BASE_URL ?? '').trim().replace(/\/$/, '');
@@ -162,16 +160,6 @@ async function collectDockerLogs(input: AnalyzeLogsRequest): Promise<string> {
   const args = ['logs', '--tail', String(safeMaxLines), '--since', sinceDate, safeTarget];
 
   return runAllowedCommand('docker', args);
-}
-
-function parseAllowedFilePaths(): Set<string> {
-  return new Set(
-    String(process.env.ALLOWED_LOG_FILES ?? '')
-      .trimEnd().split(',')
-      .map((value) => value.trim())
-      .filter(Boolean)
-      .map((value) => path.resolve(value))
-  );
 }
 
 function parseStringArray(value: unknown, field: string, required: boolean): string[] {
@@ -752,14 +740,9 @@ export async function collectLokiBatchLogs(input: AnalyzeLogsBatchLokiRequest): 
   return { query, logs, limit, hours };
 }
 
-export function getAllowedLogFileTargets(): string[] {
-  return Array.from(parseAllowedFilePaths()).sort((a, b) => a.localeCompare(b));
-}
-
 export function getLogCollectorLimits(): {
   maxHours: number;
   maxLinesCap: number;
-  maxFileBytes: number;
   maxCommandBytes: number;
   collectionTimeoutMs: number;
   loki: {
@@ -775,7 +758,6 @@ export function getLogCollectorLimits(): {
   return {
     maxHours: MAX_HOURS,
     maxLinesCap: MAX_LINES_CAP,
-    maxFileBytes: MAX_FILE_BYTES,
     maxCommandBytes: MAX_COMMAND_BYTES,
     collectionTimeoutMs: LOG_COLLECTION_TIMEOUT_MS,
     loki: {
@@ -790,132 +772,6 @@ export function getLogCollectorLimits(): {
   };
 }
 
-export type IncrementalFileLogsResult = {
-  logs: string;
-  fromCursor: number;
-  nextCursor: number;
-  rotated: boolean;
-  truncatedByBytes: boolean;
-};
-
-export async function collectFileLogsIncremental(input: {
-  target: string;
-  cursor: number;
-  maxLines: number;
-}): Promise<IncrementalFileLogsResult> {
-  const safeMaxLines = clampMaxLines(input.maxLines);
-  const requestedPath = path.resolve(input.target);
-  const allowed = parseAllowedFilePaths();
-
-  if (!allowed.has(requestedPath)) {
-    throw buildError(403, 'file target is not in ALLOWED_LOG_FILES');
-  }
-
-  await access(requestedPath, constants.R_OK);
-  const handle = await openFile(requestedPath, 'r');
-  try {
-    const stat = await handle.stat();
-    const size = stat.size;
-    const requestedCursor = Math.max(0, Math.floor(input.cursor));
-    let fromCursor = Math.min(requestedCursor, size);
-    let rotated = false;
-
-    if (requestedCursor > size) {
-      fromCursor = 0;
-      rotated = true;
-    }
-
-    if (fromCursor >= size) {
-      return {
-        logs: '',
-        fromCursor,
-        nextCursor: fromCursor,
-        rotated,
-        truncatedByBytes: false
-      };
-    }
-
-    const availableBytes = size - fromCursor;
-    const readBytesLimit = Math.min(MAX_FILE_BYTES, availableBytes);
-    const truncatedByBytes = availableBytes > MAX_FILE_BYTES;
-    const chunkSize = 64 * 1024;
-    const chunks: Buffer[] = [];
-    let position = fromCursor;
-    let remaining = readBytesLimit;
-
-    while (remaining > 0) {
-      const toRead = Math.min(chunkSize, remaining);
-      const buf = Buffer.allocUnsafe(toRead);
-      const { bytesRead } = await handle.read(buf, 0, toRead, position);
-      if (bytesRead <= 0) {
-        break;
-      }
-      const slice = buf.subarray(0, bytesRead);
-      chunks.push(slice);
-      position += bytesRead;
-      remaining -= bytesRead;
-    }
-
-    const text = Buffer.concat(chunks).toString('utf8');
-    const lines = text.trimEnd().split(/\r?\n/);
-    const logs = lines.slice(-safeMaxLines).join('\n');
-
-    return {
-      logs,
-      fromCursor,
-      nextCursor: position,
-      rotated,
-      truncatedByBytes
-    };
-  } finally {
-    await handle.close();
-  }
-}
-
-async function collectFileLogs(input: AnalyzeLogsRequest): Promise<string> {
-  const safeMaxLines = clampMaxLines(input.maxLines);
-  const requestedPath = path.resolve(input.target);
-  const allowed = parseAllowedFilePaths();
-
-  if (!allowed.has(requestedPath)) {
-    throw buildError(403, 'file target is not in ALLOWED_LOG_FILES');
-  }
-
-  await access(requestedPath, constants.R_OK);
-  const handle = await openFile(requestedPath, 'r');
-  try {
-    const stat = await handle.stat();
-    const chunkSize = 64 * 1024;
-    let position = stat.size;
-    let bytesCollected = 0;
-    let newlineCount = 0;
-    const chunks: Buffer[] = [];
-
-    while (position > 0 && bytesCollected < MAX_FILE_BYTES && newlineCount <= safeMaxLines) {
-      const toRead = Math.min(chunkSize, position);
-      position -= toRead;
-
-      const buf = Buffer.allocUnsafe(toRead);
-      const { bytesRead } = await handle.read(buf, 0, toRead, position);
-      const slice = buf.subarray(0, bytesRead);
-      chunks.unshift(slice);
-      bytesCollected += bytesRead;
-
-      for (let i = 0; i < slice.length; i += 1) {
-        if (slice[i] === 0x0a) {
-          newlineCount += 1;
-        }
-      }
-    }
-
-    const tailText = Buffer.concat(chunks).toString('utf8');
-    const lines = tailText.trimEnd().split(/\r?\n/);
-    return lines.slice(-safeMaxLines).join('\n');
-  } finally {
-    await handle.close();
-  }
-}
-
 export async function collectLogs(input: AnalyzeLogsRequest): Promise<string> {
   if (input.source === 'journalctl' || input.source === 'journald') {
     return collectJournalctlLogs(input);
@@ -925,5 +781,5 @@ export async function collectLogs(input: AnalyzeLogsRequest): Promise<string> {
     return collectDockerLogs(input);
   }
 
-  return collectFileLogs(input);
+  throw buildError(400, `Unsupported source: ${input.source}`);
 }

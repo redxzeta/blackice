@@ -3,23 +3,18 @@ import { log } from '../log.js';
 import {
   AnalyzeLogsBatchRequestSchema,
   AnalyzeLogsBatchResponseSchema,
-  AnalyzeLogsIncrementalRequestSchema,
-  AnalyzeLogsIncrementalResponseSchema,
   AnalyzeLogsRequestSchema,
   AnalyzeLogsResponseSchema,
   AnalyzeLogsTargetsResponseSchema,
   LogExplainerJsonSchemas,
   type AnalyzeLogsBatchResultError,
   type AnalyzeLogsBatchResultOk,
-  type AnalyzeLogsIncrementalResponse,
   type AnalyzeLogsRequest
 } from './schema.js';
 import {
   checkLokiHealth,
-  collectFileLogsIncremental,
   collectLogs,
   collectLokiBatchLogs,
-  getAllowedLogFileTargets,
   getLokiSyntheticTargets
 } from './logCollector.js';
 import { analyzeLogsWithOllama } from './ollamaClient.js';
@@ -113,7 +108,7 @@ async function runConcurrent<T, R>(items: T[], concurrency: number, worker: (ite
 
 export function registerLogExplainerRoutes(app: Express): void {
   app.get('/analyze/logs/targets', (_req: Request, res: Response) => {
-    const targets = [...getAllowedLogFileTargets(), ...getLokiSyntheticTargets()];
+    const targets = [...getLokiSyntheticTargets()];
     const body = AnalyzeLogsTargetsResponseSchema.parse({ targets });
     res.status(200).json(body);
   });
@@ -144,31 +139,19 @@ export function registerLogExplainerRoutes(app: Express): void {
           method: 'POST',
           path: '/analyze/logs',
           requestSchema: {
-            source: 'journalctl | journald | docker | file',
+            source: 'journalctl | journald | docker',
             target: 'string',
             hours: 'number',
             maxLines: 'number'
           },
           responseSchema: LogExplainerJsonSchemas.analyzeLogsResponse
         },
-        incremental: {
-          method: 'POST',
-          path: '/analyze/logs/incremental',
-          requestSchema: {
-            source: 'file',
-            target: 'string',
-            cursor: 'number (optional)',
-            hours: 'number (optional)',
-            maxLines: 'number (optional)'
-          },
-          responseSchema: LogExplainerJsonSchemas.analyzeLogsIncrementalResponse
-        },
         batch: {
           method: 'POST',
           path: '/analyze/logs/batch',
           requestSchema: {
-            source: 'file | journald | loki',
-            targets: 'string[] (optional; file paths or journald units)',
+            source: 'journald | loki',
+            targets: 'string[] (optional; journald units)',
             filters: 'record<string,string> (required when source=loki; selector labels)',
             contains: 'string (optional; source=loki line filter)',
             start: 'ISO-8601 datetime (optional; source=loki)',
@@ -190,67 +173,6 @@ export function registerLogExplainerRoutes(app: Express): void {
       status,
       schemas: LogExplainerJsonSchemas
     });
-  });
-
-  app.post('/analyze/logs/incremental', async (req: Request, res: Response) => {
-    try {
-      const body = parseBodyOrRespond(AnalyzeLogsIncrementalRequestSchema, req.body, res);
-      if (!body) {
-        return;
-      }
-
-      const collected = await collectFileLogsIncremental({
-        target: body.target,
-        cursor: body.cursor,
-        maxLines: body.maxLines
-      });
-
-      if (!collected.logs.trim()) {
-        const noLogsOut: AnalyzeLogsIncrementalResponse = {
-          source: 'file',
-          target: body.target,
-          cursor: body.cursor,
-          fromCursor: collected.fromCursor,
-          nextCursor: collected.nextCursor,
-          rotated: collected.rotated,
-          truncatedByBytes: collected.truncatedByBytes,
-          noNewLogs: true
-        };
-        res.status(200).json(AnalyzeLogsIncrementalResponseSchema.parse(noLogsOut));
-        return;
-      }
-
-      const analyzed = await analyzeFromRawLogs(
-        {
-          source: 'file',
-          target: body.target,
-          hours: body.hours,
-          maxLines: body.maxLines
-        },
-        collected.logs
-      );
-
-      const bodyOut: AnalyzeLogsIncrementalResponse = {
-        source: 'file',
-        target: body.target,
-        cursor: body.cursor,
-        fromCursor: collected.fromCursor,
-        nextCursor: collected.nextCursor,
-        rotated: collected.rotated,
-        truncatedByBytes: collected.truncatedByBytes,
-        noNewLogs: false,
-        ...analyzed
-      };
-      res.status(200).json(AnalyzeLogsIncrementalResponseSchema.parse(bodyOut));
-    } catch (error: unknown) {
-      const httpError = toHttpError(error);
-      log.error('log_explainer_incremental_failed', {
-        request_id: getRequestId(res),
-        status: httpError.status,
-        message: httpError.message
-      });
-      res.status(httpError.status).json({ error: httpError.message });
-    }
   });
 
   app.post('/analyze/logs/batch', async (req: Request, res: Response) => {
@@ -351,20 +273,7 @@ export function registerLogExplainerRoutes(app: Express): void {
       let candidateTargets: string[];
       let targets: string[];
 
-      if (source === 'file') {
-        const allowedTargets = getAllowedLogFileTargets();
-        const allowedSet = new Set(allowedTargets);
-        candidateTargets = body.targets && body.targets.length > 0 ? body.targets : allowedTargets;
-        targets = candidateTargets.filter((target) => allowedSet.has(target));
-
-        if (targets.length === 0) {
-          res.status(400).json({
-            error: 'No valid targets to analyze',
-            details: 'Provide targets listed in GET /analyze/logs/targets'
-          });
-          return;
-        }
-      } else if (source === 'journald') {
+      if (source === 'journald') {
         candidateTargets = body.targets && body.targets.length > 0 ? body.targets : ['all'];
         targets = candidateTargets;
       } else {
@@ -386,7 +295,7 @@ export function registerLogExplainerRoutes(app: Express): void {
 
         const collectorRequest: AnalyzeLogsRequest = {
           ...analysisRequest,
-          source: source === 'journald' ? 'journalctl' : 'file'
+          source: 'journalctl'
         };
 
         try {
