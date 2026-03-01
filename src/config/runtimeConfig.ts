@@ -1,66 +1,73 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
+import { z } from 'zod';
 
-type YamlOllamaConfig = {
-  baseUrl?: string;
-  model?: string;
-  timeoutMs?: number;
-  retryAttempts?: number;
-  retryBackoffMs?: number;
-};
+const YamlConfigSchema = z
+  .object({
+    version: z.number().int().positive().optional(),
+    ollama: z
+      .object({
+        baseUrl: z.string().trim().optional(),
+        model: z.string().trim().optional(),
+        timeoutMs: z.number().int().positive().optional(),
+        retryAttempts: z.number().int().nonnegative().optional(),
+        retryBackoffMs: z.number().int().positive().optional()
+      })
+      .optional(),
+    loki: z
+      .object({
+        baseUrl: z.string().trim().optional(),
+        timeoutMs: z.number().int().positive().optional(),
+        maxWindowMinutes: z.number().int().positive().optional(),
+        defaultWindowMinutes: z.number().int().positive().optional(),
+        maxLinesCap: z.number().int().positive().optional(),
+        maxResponseBytes: z.number().int().positive().optional(),
+        requireScopeLabels: z.boolean().optional(),
+        rulesFile: z.string().trim().optional()
+      })
+      .optional(),
+    limits: z
+      .object({
+        logCollectionTimeoutMs: z.number().int().positive().optional(),
+        maxCommandBytes: z.number().int().positive().optional(),
+        maxQueryHours: z.number().int().positive().optional(),
+        maxLinesCap: z.number().int().positive().optional()
+      })
+      .optional()
+  })
+  .strict();
 
-type YamlLokiConfig = {
-  baseUrl?: string;
-  timeoutMs?: number;
-  maxWindowMinutes?: number;
-  defaultWindowMinutes?: number;
-  maxLinesCap?: number;
-  maxResponseBytes?: number;
-  requireScopeLabels?: boolean;
-  rulesFile?: string;
-};
+const RuntimeConfigSchema = z
+  .object({
+    configFile: z.string().min(1),
+    ollama: z.object({
+      baseUrl: z.string().min(1),
+      model: z.string().min(1),
+      timeoutMs: z.number().int().positive(),
+      retryAttempts: z.number().int().nonnegative(),
+      retryBackoffMs: z.number().int().positive()
+    }),
+    loki: z.object({
+      baseUrl: z.string(),
+      timeoutMs: z.number().int().positive(),
+      maxWindowMinutes: z.number().int().positive(),
+      defaultWindowMinutes: z.number().int().positive(),
+      maxLinesCap: z.number().int().positive(),
+      maxResponseBytes: z.number().int().positive(),
+      requireScopeLabels: z.boolean(),
+      rulesFile: z.string()
+    }),
+    limits: z.object({
+      logCollectionTimeoutMs: z.number().int().positive(),
+      maxCommandBytes: z.number().int().positive(),
+      maxQueryHours: z.number().int().positive(),
+      maxLinesCap: z.number().int().positive()
+    })
+  })
+  .strict();
 
-type YamlLimitsConfig = {
-  logCollectionTimeoutMs?: number;
-  maxCommandBytes?: number;
-  maxQueryHours?: number;
-  maxLinesCap?: number;
-};
-
-type YamlConfig = {
-  ollama?: YamlOllamaConfig;
-  loki?: YamlLokiConfig;
-  limits?: YamlLimitsConfig;
-};
-
-export type RuntimeConfig = {
-  configFile: string;
-  ollama: Required<YamlOllamaConfig>;
-  loki: Required<YamlLokiConfig>;
-  limits: Required<YamlLimitsConfig>;
-};
-
-function asString(value: unknown, field: string): string {
-  if (typeof value !== 'string') {
-    throw new Error(`Invalid config: "${field}" must be a string`);
-  }
-  return value.trim();
-}
-
-function asNumber(value: unknown, field: string): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
-    throw new Error(`Invalid config: "${field}" must be a finite number`);
-  }
-  return value;
-}
-
-function asBoolean(value: unknown, field: string): boolean {
-  if (typeof value !== 'boolean') {
-    throw new Error(`Invalid config: "${field}" must be a boolean`);
-  }
-  return value;
-}
+export type RuntimeConfig = z.infer<typeof RuntimeConfigSchema>;
 
 function parseEnvNumber(value: string | undefined, fallback: number): number {
   if (value === undefined) {
@@ -77,85 +84,18 @@ function parseEnvBoolean(value: string | undefined, fallback: boolean): boolean 
   return value.trim().toLowerCase() !== 'false';
 }
 
-function loadYamlConfig(filePath: string): YamlConfig {
+function loadYamlConfig(filePath: string): z.infer<typeof YamlConfigSchema> {
   if (!existsSync(filePath)) {
     throw new Error(`Config file not found: ${filePath}`);
   }
 
   const raw = readFileSync(filePath, 'utf8');
   const parsed = parseYaml(raw);
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw new Error('Config file must contain a top-level object');
+  const result = YamlConfigSchema.safeParse(parsed);
+  if (!result.success) {
+    throw new Error(`Invalid config file: ${result.error.issues.map((i) => i.message).join('; ')}`);
   }
-
-  const body = parsed as Record<string, unknown>;
-  const config: YamlConfig = {};
-
-  if (body.ollama !== undefined) {
-    if (typeof body.ollama !== 'object' || body.ollama === null || Array.isArray(body.ollama)) {
-      throw new Error('Invalid config: "ollama" must be an object');
-    }
-    const section = body.ollama as Record<string, unknown>;
-    config.ollama = {
-      ...(section.baseUrl !== undefined ? { baseUrl: asString(section.baseUrl, 'ollama.baseUrl') } : {}),
-      ...(section.model !== undefined ? { model: asString(section.model, 'ollama.model') } : {}),
-      ...(section.timeoutMs !== undefined ? { timeoutMs: asNumber(section.timeoutMs, 'ollama.timeoutMs') } : {}),
-      ...(section.retryAttempts !== undefined
-        ? { retryAttempts: asNumber(section.retryAttempts, 'ollama.retryAttempts') }
-        : {}),
-      ...(section.retryBackoffMs !== undefined
-        ? { retryBackoffMs: asNumber(section.retryBackoffMs, 'ollama.retryBackoffMs') }
-        : {})
-    };
-  }
-
-  if (body.loki !== undefined) {
-    if (typeof body.loki !== 'object' || body.loki === null || Array.isArray(body.loki)) {
-      throw new Error('Invalid config: "loki" must be an object');
-    }
-    const section = body.loki as Record<string, unknown>;
-    config.loki = {
-      ...(section.baseUrl !== undefined ? { baseUrl: asString(section.baseUrl, 'loki.baseUrl') } : {}),
-      ...(section.timeoutMs !== undefined ? { timeoutMs: asNumber(section.timeoutMs, 'loki.timeoutMs') } : {}),
-      ...(section.maxWindowMinutes !== undefined
-        ? { maxWindowMinutes: asNumber(section.maxWindowMinutes, 'loki.maxWindowMinutes') }
-        : {}),
-      ...(section.defaultWindowMinutes !== undefined
-        ? { defaultWindowMinutes: asNumber(section.defaultWindowMinutes, 'loki.defaultWindowMinutes') }
-        : {}),
-      ...(section.maxLinesCap !== undefined
-        ? { maxLinesCap: asNumber(section.maxLinesCap, 'loki.maxLinesCap') }
-        : {}),
-      ...(section.maxResponseBytes !== undefined
-        ? { maxResponseBytes: asNumber(section.maxResponseBytes, 'loki.maxResponseBytes') }
-        : {}),
-      ...(section.requireScopeLabels !== undefined
-        ? { requireScopeLabels: asBoolean(section.requireScopeLabels, 'loki.requireScopeLabels') }
-        : {}),
-      ...(section.rulesFile !== undefined ? { rulesFile: asString(section.rulesFile, 'loki.rulesFile') } : {})
-    };
-  }
-
-  if (body.limits !== undefined) {
-    if (typeof body.limits !== 'object' || body.limits === null || Array.isArray(body.limits)) {
-      throw new Error('Invalid config: "limits" must be an object');
-    }
-    const section = body.limits as Record<string, unknown>;
-    config.limits = {
-      ...(section.logCollectionTimeoutMs !== undefined
-        ? { logCollectionTimeoutMs: asNumber(section.logCollectionTimeoutMs, 'limits.logCollectionTimeoutMs') }
-        : {}),
-      ...(section.maxCommandBytes !== undefined
-        ? { maxCommandBytes: asNumber(section.maxCommandBytes, 'limits.maxCommandBytes') }
-        : {}),
-      ...(section.maxQueryHours !== undefined
-        ? { maxQueryHours: asNumber(section.maxQueryHours, 'limits.maxQueryHours') }
-        : {}),
-      ...(section.maxLinesCap !== undefined ? { maxLinesCap: asNumber(section.maxLinesCap, 'limits.maxLinesCap') } : {})
-    };
-  }
-
-  return config;
+  return result.data;
 }
 
 let cachedRuntimeConfig: RuntimeConfig | null = null;
@@ -205,5 +145,6 @@ export function getRuntimeConfig(): RuntimeConfig {
     loki,
     limits
   };
+  cachedRuntimeConfig = RuntimeConfigSchema.parse(cachedRuntimeConfig);
   return cachedRuntimeConfig;
 }
