@@ -27,7 +27,11 @@ import {
 } from './logCollector.js';
 import { analyzeLogsWithOllama } from './ollamaClient.js';
 import { SYSTEM_PROMPT, buildUserPrompt, truncateLogs, type AnalyzePromptRequest } from './promptTemplates.js';
-import { ensureReadOnlyAnalysisOutput, sanitizeReadOnlyAnalysisOutput } from './outputSafety.js';
+import {
+  ensureReadOnlyAnalysisOutput,
+  sanitizeReadOnlyAnalysisOutput,
+  sanitizeReadOnlyEvidenceLine
+} from './outputSafety.js';
 import { errMessage, toHttpError } from '../http/errors.js';
 import { getRequestId } from '../http/requestLogging.js';
 import { parseBodyOrRespond } from '../http/validation.js';
@@ -66,9 +70,9 @@ function buildEvidence(rawLogs: string, requestedLines?: number): EvidenceLine[]
   return lines.map((line) => {
     const match = line.match(/^(\d{4}-\d{2}-\d{2}T[^\s]+)\s+(.*)$/);
     if (match) {
-      return { ts: match[1], line: match[2] };
+      return { ts: match[1], line: sanitizeReadOnlyEvidenceLine(match[2]) };
     }
-    return { ts: '', line };
+    return { ts: '', line: sanitizeReadOnlyEvidenceLine(line) };
   });
 }
 

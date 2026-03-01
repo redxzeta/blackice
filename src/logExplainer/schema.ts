@@ -50,7 +50,7 @@ export const AnalyzeLogsBatchRequestSchema = z
     sinceMinutes: z.number().int().positive().max(ANALYZE_MAX_HOURS * 60).optional(),
     maxLines: z.number().int().positive().max(ANALYZE_MAX_LINES_REQUEST).optional().default(300),
     concurrency: z.number().int().min(BATCH_CONCURRENCY_MIN).max(BATCH_CONCURRENCY_MAX).optional().default(BATCH_CONCURRENCY_DEFAULT),
-    mode: z.enum(['analyze', 'raw', 'both']).optional().default('analyze'),
+    mode: z.enum(['analyze', 'raw', 'both']).optional(),
     evidenceLines: z.number().int().positive().max(BATCH_EVIDENCE_LINES_MAX).optional().default(BATCH_EVIDENCE_LINES_DEFAULT),
     analyze: z.boolean().optional().default(true),
     collectOnly: z.boolean().optional()
