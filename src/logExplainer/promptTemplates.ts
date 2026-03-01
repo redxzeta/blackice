@@ -1,4 +1,5 @@
 import type { AnalyzeLogsRequest } from './schema.js';
+import { getRuntimeConfig } from '../config/runtimeConfig.js';
 
 export type AnalyzePromptRequest = Pick<AnalyzeLogsRequest, 'target' | 'hours' | 'maxLines' | 'analyze' | 'collectOnly'> & {
   source: AnalyzeLogsRequest['source'] | 'loki';
@@ -24,7 +25,7 @@ Output format requirements:
 - In "Recommended Next Safe Checks", list only observational commands (for example: journalctl queries, systemctl status, docker logs, cat, grep, ss, ls).
 `;
 
-const MAX_LOG_CHARS = Number(process.env.MAX_LOG_CHARS ?? 40_000);
+const MAX_LOG_CHARS = Number(getRuntimeConfig().limits.maxLogChars);
 
 export function truncateLogs(input: string): { text: string; truncated: boolean } {
   if (input.length <= MAX_LOG_CHARS) {

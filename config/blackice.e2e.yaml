@@ -22,3 +22,5 @@ limits:
   maxCommandBytes: 2000000
   maxQueryHours: 168
   maxLinesCap: 2000
+  maxConcurrency: 5
+  maxLogChars: 40000

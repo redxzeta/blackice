@@ -1,12 +1,13 @@
 import { z } from 'zod';
+import { getRuntimeConfig } from '../config/runtimeConfig.js';
 
 export const ANALYZE_MAX_HOURS = 168;
 export const ANALYZE_MAX_LINES_REQUEST = 5000;
 export const BATCH_CONCURRENCY_MIN = 1;
 export const LOKI_MAX_LIMIT_REQUEST = 5000;
-const ENV_MAX_CONCURRENCY = Number(process.env.MAX_CONCURRENCY ?? 5);
-export const BATCH_CONCURRENCY_MAX = Number.isFinite(ENV_MAX_CONCURRENCY) && ENV_MAX_CONCURRENCY >= BATCH_CONCURRENCY_MIN
-  ? Math.floor(ENV_MAX_CONCURRENCY)
+const CONFIG_MAX_CONCURRENCY = Number(getRuntimeConfig().limits.maxConcurrency);
+export const BATCH_CONCURRENCY_MAX = Number.isFinite(CONFIG_MAX_CONCURRENCY) && CONFIG_MAX_CONCURRENCY >= BATCH_CONCURRENCY_MIN
+  ? Math.floor(CONFIG_MAX_CONCURRENCY)
   : 5;
 const BATCH_CONCURRENCY_DEFAULT = Math.min(2, BATCH_CONCURRENCY_MAX);
 

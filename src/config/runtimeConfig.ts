@@ -32,7 +32,9 @@ const YamlConfigSchema = z
         logCollectionTimeoutMs: z.number().int().positive().optional(),
         maxCommandBytes: z.number().int().positive().optional(),
         maxQueryHours: z.number().int().positive().optional(),
-        maxLinesCap: z.number().int().positive().optional()
+        maxLinesCap: z.number().int().positive().optional(),
+        maxConcurrency: z.number().int().positive().optional(),
+        maxLogChars: z.number().int().positive().optional()
       })
       .optional()
   })
@@ -62,7 +64,9 @@ const RuntimeConfigSchema = z
       logCollectionTimeoutMs: z.number().int().positive(),
       maxCommandBytes: z.number().int().positive(),
       maxQueryHours: z.number().int().positive(),
-      maxLinesCap: z.number().int().positive()
+      maxLinesCap: z.number().int().positive(),
+      maxConcurrency: z.number().int().positive(),
+      maxLogChars: z.number().int().positive()
     })
   })
   .strict();
@@ -103,7 +107,9 @@ export function getRuntimeConfig(): RuntimeConfig {
     logCollectionTimeoutMs: limitsYaml.logCollectionTimeoutMs ?? 15_000,
     maxCommandBytes: limitsYaml.maxCommandBytes ?? 2_000_000,
     maxQueryHours: limitsYaml.maxQueryHours ?? 168,
-    maxLinesCap: limitsYaml.maxLinesCap ?? 2_000
+    maxLinesCap: limitsYaml.maxLinesCap ?? 2_000,
+    maxConcurrency: limitsYaml.maxConcurrency ?? 5,
+    maxLogChars: limitsYaml.maxLogChars ?? 40_000
   };
 
   const ollama = {
