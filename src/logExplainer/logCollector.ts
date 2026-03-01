@@ -11,8 +11,6 @@ const MAX_COMMAND_BYTES = Number(runtimeConfig.limits.maxCommandBytes);
 const MAX_HOURS = Number(runtimeConfig.limits.maxQueryHours);
 const MAX_LINES_CAP = Number(runtimeConfig.limits.maxLinesCap);
 const LOKI_BASE_URL = String(runtimeConfig.loki.baseUrl).trim().replace(/\/$/, '');
-const LOKI_TENANT_ID = String(runtimeConfig.loki.tenantId).trim();
-const LOKI_AUTH_BEARER = String(runtimeConfig.loki.authBearer).trim();
 const LOKI_TIMEOUT_MS = Number(runtimeConfig.loki.timeoutMs);
 const LOKI_MAX_WINDOW_MINUTES = Number(runtimeConfig.loki.maxWindowMinutes);
 const LOKI_DEFAULT_WINDOW_MINUTES = Number(runtimeConfig.loki.defaultWindowMinutes);
@@ -494,14 +492,7 @@ function formatStreamLabels(labels: Record<string, string>): string {
 }
 
 function headersWithAuth(): Record<string, string> {
-  const headers: Record<string, string> = {};
-  if (LOKI_TENANT_ID) {
-    headers['X-Scope-OrgID'] = LOKI_TENANT_ID;
-  }
-  if (LOKI_AUTH_BEARER) {
-    headers.Authorization = `Bearer ${LOKI_AUTH_BEARER}`;
-  }
-  return headers;
+  return {};
 }
 
 export async function checkLokiHealth(): Promise<{ enabled: boolean; ok: boolean; status: number; details: string }> {

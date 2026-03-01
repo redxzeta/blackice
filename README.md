@@ -103,8 +103,6 @@ Security controls:
 - `ALLOWLIST_LOG_PATHS` (comma-separated absolute files or directories)
 - `LOKI_BASE_URL` (enables Loki log source for `/analyze/logs/batch` when set)
 - `LOKI_RULES_FILE` (required path to YAML rules file when `LOKI_BASE_URL` is set)
-- `LOKI_TENANT_ID` (optional tenant header `X-Scope-OrgID`)
-- `LOKI_AUTH_BEARER` (optional bearer auth token for Loki)
 - `LOKI_TIMEOUT_MS` (default `10000`; timeout for Loki `query_range`)
 - `LOKI_MAX_WINDOW_MINUTES` (default `60`; max `start`/`end` window for Loki query mode)
 - `LOKI_DEFAULT_WINDOW_MINUTES` (default `15`; default window when `start`/`end` omitted)

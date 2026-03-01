@@ -12,8 +12,6 @@ type YamlOllamaConfig = {
 
 type YamlLokiConfig = {
   baseUrl?: string;
-  tenantId?: string;
-  authBearer?: string;
   timeoutMs?: number;
   maxWindowMinutes?: number;
   defaultWindowMinutes?: number;
@@ -118,8 +116,6 @@ function loadYamlConfig(filePath: string): YamlConfig {
     const section = body.loki as Record<string, unknown>;
     config.loki = {
       ...(section.baseUrl !== undefined ? { baseUrl: asString(section.baseUrl, 'loki.baseUrl') } : {}),
-      ...(section.tenantId !== undefined ? { tenantId: asString(section.tenantId, 'loki.tenantId') } : {}),
-      ...(section.authBearer !== undefined ? { authBearer: asString(section.authBearer, 'loki.authBearer') } : {}),
       ...(section.timeoutMs !== undefined ? { timeoutMs: asNumber(section.timeoutMs, 'loki.timeoutMs') } : {}),
       ...(section.maxWindowMinutes !== undefined
         ? { maxWindowMinutes: asNumber(section.maxWindowMinutes, 'loki.maxWindowMinutes') }
@@ -194,8 +190,6 @@ export function getRuntimeConfig(): RuntimeConfig {
 
   const loki = {
     baseUrl: String(process.env.LOKI_BASE_URL ?? lokiYaml.baseUrl ?? '').trim().replace(/\/$/, ''),
-    tenantId: String(process.env.LOKI_TENANT_ID ?? lokiYaml.tenantId ?? '').trim(),
-    authBearer: String(process.env.LOKI_AUTH_BEARER ?? lokiYaml.authBearer ?? '').trim(),
     timeoutMs: parseEnvNumber(process.env.LOKI_TIMEOUT_MS, lokiYaml.timeoutMs ?? limits.logCollectionTimeoutMs),
     maxWindowMinutes: parseEnvNumber(process.env.LOKI_MAX_WINDOW_MINUTES, lokiYaml.maxWindowMinutes ?? 60),
     defaultWindowMinutes: parseEnvNumber(process.env.LOKI_DEFAULT_WINDOW_MINUTES, lokiYaml.defaultWindowMinutes ?? 15),
