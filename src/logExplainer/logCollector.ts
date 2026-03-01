@@ -357,8 +357,42 @@ export function getAllowedLokiSelectors(): string[] {
   return [];
 }
 
+function buildSyntheticSelector(labels: Record<string, string>): string {
+  const entries = Object.entries(labels)
+    .filter(([, value]) => value.length > 0)
+    .sort(([a], [b]) => a.localeCompare(b));
+  return `{${entries.map(([key, value]) => `${key}="${escapeLogQLLabelValue(value)}"`).join(',')}}`;
+}
+
 export function getLokiSyntheticTargets(): string[] {
-  return [];
+  try {
+    const rules = loadLokiRulesConfig();
+    const targets = new Set<string>();
+
+    for (const host of rules.hosts) {
+      const selector = buildSyntheticSelector({
+        ...(rules.job ? { job: rules.job } : {}),
+        host
+      });
+      targets.add(`loki:${selector}`);
+    }
+
+    for (const unit of rules.units) {
+      const selector = buildSyntheticSelector({
+        ...(rules.job ? { job: rules.job } : {}),
+        unit
+      });
+      targets.add(`loki:${selector}`);
+    }
+
+    if (targets.size === 0 && rules.job) {
+      targets.add(`loki:${buildSyntheticSelector({ job: rules.job })}`);
+    }
+
+    return Array.from(targets).sort((a, b) => a.localeCompare(b));
+  } catch {
+    return [];
+  }
 }
 
 export function validateAllowedLokiSelector(selector: string): string {

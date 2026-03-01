@@ -112,6 +112,7 @@ export function getRuntimeConfig(): RuntimeConfig {
   const ollamaYaml = yamlConfig.ollama ?? {};
   const lokiYaml = yamlConfig.loki ?? {};
   const limitsYaml = yamlConfig.limits ?? {};
+  const configDir = path.dirname(configFile);
 
   const limits = {
     logCollectionTimeoutMs: parseEnvNumber(process.env.LOG_COLLECTION_TIMEOUT_MS, limitsYaml.logCollectionTimeoutMs ?? 15_000),
@@ -128,6 +129,10 @@ export function getRuntimeConfig(): RuntimeConfig {
     retryBackoffMs: parseEnvNumber(process.env.OLLAMA_RETRY_BACKOFF_MS, ollamaYaml.retryBackoffMs ?? 1_000)
   };
 
+  const hasEnvRulesFile = process.env.LOKI_RULES_FILE !== undefined;
+  const rulesFileRaw = String(process.env.LOKI_RULES_FILE ?? lokiYaml.rulesFile ?? '').trim();
+  const rulesFile = hasEnvRulesFile || !rulesFileRaw ? rulesFileRaw : path.resolve(configDir, rulesFileRaw);
+
   const loki = {
     baseUrl: String(process.env.LOKI_BASE_URL ?? lokiYaml.baseUrl ?? '').trim().replace(/\/$/, ''),
     timeoutMs: parseEnvNumber(process.env.LOKI_TIMEOUT_MS, lokiYaml.timeoutMs ?? limits.logCollectionTimeoutMs),
@@ -136,7 +141,7 @@ export function getRuntimeConfig(): RuntimeConfig {
     maxLinesCap: parseEnvNumber(process.env.LOKI_MAX_LINES_CAP, lokiYaml.maxLinesCap ?? limits.maxLinesCap),
     maxResponseBytes: parseEnvNumber(process.env.LOKI_MAX_RESPONSE_BYTES, lokiYaml.maxResponseBytes ?? limits.maxCommandBytes),
     requireScopeLabels: parseEnvBoolean(process.env.LOKI_REQUIRE_SCOPE_LABELS, lokiYaml.requireScopeLabels ?? true),
-    rulesFile: String(process.env.LOKI_RULES_FILE ?? lokiYaml.rulesFile ?? '').trim()
+    rulesFile
   };
 
   cachedRuntimeConfig = {
