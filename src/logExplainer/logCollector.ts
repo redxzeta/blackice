@@ -20,7 +20,7 @@ const LOKI_MAX_LINES_CAP = Number(process.env.LOKI_MAX_LINES_CAP ?? MAX_LINES_CA
 const LOKI_MAX_RESPONSE_BYTES = Number(process.env.LOKI_MAX_RESPONSE_BYTES ?? MAX_COMMAND_BYTES);
 const LOKI_REQUIRE_SCOPE_LABELS =
   String(process.env.LOKI_REQUIRE_SCOPE_LABELS ?? 'true').trim().toLowerCase() !== 'false';
-const LOKI_RULES_FILE = path.resolve(String(process.env.LOKI_RULES_FILE ?? './config/loki-rules.yaml').trim());
+const LOKI_RULES_FILE_RAW = String(process.env.LOKI_RULES_FILE ?? '').trim();
 
 type LokiStreamResult = {
   stream?: Record<string, string>;
@@ -222,17 +222,23 @@ function loadLokiRulesConfig(): LokiRulesConfig {
     return cachedLokiRules;
   }
 
-  if (!existsSync(LOKI_RULES_FILE)) {
-    throw buildError(503, `Loki rules file not found: ${LOKI_RULES_FILE}`);
+  if (!LOKI_RULES_FILE_RAW) {
+    throw buildError(503, 'LOKI_RULES_FILE is required when Loki source is enabled');
+  }
+
+  const rulesFile = path.resolve(LOKI_RULES_FILE_RAW);
+
+  if (!existsSync(rulesFile)) {
+    throw buildError(503, `Loki rules file not found: ${rulesFile}`);
   }
 
   let parsed: unknown;
   try {
-    const raw = readFileSync(LOKI_RULES_FILE, 'utf8');
+    const raw = readFileSync(rulesFile, 'utf8');
     parsed = parseYaml(raw);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    throw buildError(503, `Failed to read Loki rules file (${LOKI_RULES_FILE}): ${message}`);
+    throw buildError(503, `Failed to read Loki rules file (${rulesFile}): ${message}`);
   }
 
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
