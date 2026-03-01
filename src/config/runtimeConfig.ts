@@ -69,21 +69,6 @@ const RuntimeConfigSchema = z
 
 export type RuntimeConfig = z.infer<typeof RuntimeConfigSchema>;
 
-function parseEnvNumber(value: string | undefined, fallback: number): number {
-  if (value === undefined) {
-    return fallback;
-  }
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function parseEnvBoolean(value: string | undefined, fallback: boolean): boolean {
-  if (value === undefined) {
-    return fallback;
-  }
-  return value.trim().toLowerCase() !== 'false';
-}
-
 function loadYamlConfig(filePath: string): z.infer<typeof YamlConfigSchema> {
   if (!existsSync(filePath)) {
     throw new Error(`Config file not found: ${filePath}`);
@@ -115,32 +100,31 @@ export function getRuntimeConfig(): RuntimeConfig {
   const configDir = path.dirname(configFile);
 
   const limits = {
-    logCollectionTimeoutMs: parseEnvNumber(process.env.LOG_COLLECTION_TIMEOUT_MS, limitsYaml.logCollectionTimeoutMs ?? 15_000),
-    maxCommandBytes: parseEnvNumber(process.env.MAX_COMMAND_BYTES, limitsYaml.maxCommandBytes ?? 2_000_000),
-    maxQueryHours: parseEnvNumber(process.env.MAX_QUERY_HOURS ?? process.env.MAX_HOURS, limitsYaml.maxQueryHours ?? 168),
-    maxLinesCap: parseEnvNumber(process.env.MAX_LINES ?? process.env.MAX_LINES_CAP, limitsYaml.maxLinesCap ?? 2_000)
+    logCollectionTimeoutMs: limitsYaml.logCollectionTimeoutMs ?? 15_000,
+    maxCommandBytes: limitsYaml.maxCommandBytes ?? 2_000_000,
+    maxQueryHours: limitsYaml.maxQueryHours ?? 168,
+    maxLinesCap: limitsYaml.maxLinesCap ?? 2_000
   };
 
   const ollama = {
-    baseUrl: String(process.env.OLLAMA_BASE_URL ?? ollamaYaml.baseUrl ?? 'http://192.168.1.230:11434').trim(),
-    model: String(process.env.OLLAMA_MODEL ?? ollamaYaml.model ?? 'qwen2.5:14b').trim(),
-    timeoutMs: parseEnvNumber(process.env.OLLAMA_TIMEOUT_MS, ollamaYaml.timeoutMs ?? 45_000),
-    retryAttempts: parseEnvNumber(process.env.OLLAMA_RETRY_ATTEMPTS, ollamaYaml.retryAttempts ?? 2),
-    retryBackoffMs: parseEnvNumber(process.env.OLLAMA_RETRY_BACKOFF_MS, ollamaYaml.retryBackoffMs ?? 1_000)
+    baseUrl: String(ollamaYaml.baseUrl ?? 'http://192.168.1.230:11434').trim(),
+    model: String(ollamaYaml.model ?? 'qwen2.5:14b').trim(),
+    timeoutMs: ollamaYaml.timeoutMs ?? 45_000,
+    retryAttempts: ollamaYaml.retryAttempts ?? 2,
+    retryBackoffMs: ollamaYaml.retryBackoffMs ?? 1_000
   };
 
-  const hasEnvRulesFile = process.env.LOKI_RULES_FILE !== undefined;
-  const rulesFileRaw = String(process.env.LOKI_RULES_FILE ?? lokiYaml.rulesFile ?? '').trim();
-  const rulesFile = hasEnvRulesFile || !rulesFileRaw ? rulesFileRaw : path.resolve(configDir, rulesFileRaw);
+  const rulesFileRaw = String(lokiYaml.rulesFile ?? '').trim();
+  const rulesFile = !rulesFileRaw ? rulesFileRaw : path.resolve(configDir, rulesFileRaw);
 
   const loki = {
-    baseUrl: String(process.env.LOKI_BASE_URL ?? lokiYaml.baseUrl ?? '').trim().replace(/\/$/, ''),
-    timeoutMs: parseEnvNumber(process.env.LOKI_TIMEOUT_MS, lokiYaml.timeoutMs ?? limits.logCollectionTimeoutMs),
-    maxWindowMinutes: parseEnvNumber(process.env.LOKI_MAX_WINDOW_MINUTES, lokiYaml.maxWindowMinutes ?? 60),
-    defaultWindowMinutes: parseEnvNumber(process.env.LOKI_DEFAULT_WINDOW_MINUTES, lokiYaml.defaultWindowMinutes ?? 15),
-    maxLinesCap: parseEnvNumber(process.env.LOKI_MAX_LINES_CAP, lokiYaml.maxLinesCap ?? limits.maxLinesCap),
-    maxResponseBytes: parseEnvNumber(process.env.LOKI_MAX_RESPONSE_BYTES, lokiYaml.maxResponseBytes ?? limits.maxCommandBytes),
-    requireScopeLabels: parseEnvBoolean(process.env.LOKI_REQUIRE_SCOPE_LABELS, lokiYaml.requireScopeLabels ?? true),
+    baseUrl: String(lokiYaml.baseUrl ?? '').trim().replace(/\/$/, ''),
+    timeoutMs: lokiYaml.timeoutMs ?? limits.logCollectionTimeoutMs,
+    maxWindowMinutes: lokiYaml.maxWindowMinutes ?? 60,
+    defaultWindowMinutes: lokiYaml.defaultWindowMinutes ?? 15,
+    maxLinesCap: lokiYaml.maxLinesCap ?? limits.maxLinesCap,
+    maxResponseBytes: lokiYaml.maxResponseBytes ?? limits.maxCommandBytes,
+    requireScopeLabels: lokiYaml.requireScopeLabels ?? true,
     rulesFile
   };
 

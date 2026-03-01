@@ -84,7 +84,7 @@ curl -sS http://127.0.0.1:3000/analyze/logs/batch \
 - Uses only read-only collectors: `journalctl`, `docker logs`, and Loki query_range.
 - Loki source is read-only via `/loki/api/v1/query_range`.
 - Loki selectors are constructed internally from validated `filters` (raw `query` and selector strings are rejected).
-- Loki/Ollama defaults are loaded from `BLACKICE_CONFIG_FILE` YAML; env vars can override.
+- Loki/Ollama runtime config is loaded from `BLACKICE_CONFIG_FILE` YAML.
 - No shell mode execution (`spawn` with `shell: false`).
 - Command output byte caps are enforced.
 - Loki guards: default 15-minute window, max window (default 60 minutes), max line cap, max response bytes, and scoped-label requirement (`host` or `unit`) unless `allowUnscoped: true`.

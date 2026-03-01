@@ -140,7 +140,7 @@ Environment config files:
 - `config/blackice.prod.yaml`
 
 Config precedence:
-- Environment variables override YAML values.
+- `BLACKICE_CONFIG_FILE` selects which YAML file is loaded.
 
 ## Quick Tests
 Streaming CHAT:
