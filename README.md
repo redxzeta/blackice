@@ -56,10 +56,11 @@ npm run dev
 - `POST /v1/debate`
 - `POST /analyze/logs`
 - `POST /v1/policy/dry-run`
-- `GET /logs/recent`
-- `GET /logs/metrics`
+- `GET /logs/recent` *(requires `OPS_ENABLED=1`)*
+- `GET /logs/metrics` *(requires `OPS_ENABLED=1`)*
 - `GET /version`
 - `GET /healthz`
+- `GET /readyz`
 - `GET /health/loki`
 
 ## Envelope Contract
@@ -112,6 +113,8 @@ Security controls:
 - `LOG_BUFFER_MAX_ENTRIES` (default `2000`; in-memory API log buffer size for `/logs/*`)
 - `OPS_ENABLED` (`1` to expose `/logs/recent` and `/logs/metrics`; default disabled)
 - `STREAM_SUPPRESS_TOOLISH` (`1` to suppress tool-call-like SSE payloads; default preserves raw output)
+- `READINESS_TIMEOUT_MS` (default `1500`; timeout in ms for `/readyz` Ollama probe, clamped to `100..10000`)
+- `READINESS_STRICT` (`1` or `0`, default `1`; when `1`, `/readyz` returns `503` if upstream is unavailable)
 - `BUILD_GIT_SHA` (optional; exposed by `GET /version`)
 - `BUILD_TIME` (optional ISO timestamp; exposed by `GET /version`)
 
@@ -234,6 +237,14 @@ curl -sS "http://127.0.0.1:3000/logs/recent?limit=100"
 API metrics (last 1 hour):
 ```bash
 curl -sS "http://127.0.0.1:3000/logs/metrics?window=1h"
+```
+
+Readiness check:
+
+
+Readiness check:
+```bash
+curl -sS -i "http://127.0.0.1:3000/readyz"
 ```
 
 Runtime version:
