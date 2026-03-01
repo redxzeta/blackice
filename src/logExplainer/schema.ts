@@ -4,6 +4,8 @@ export const ANALYZE_MAX_HOURS = 168;
 export const ANALYZE_MAX_LINES_REQUEST = 5000;
 export const BATCH_CONCURRENCY_MIN = 1;
 export const LOKI_MAX_LIMIT_REQUEST = 5000;
+export const BATCH_EVIDENCE_LINES_MAX = 50;
+export const BATCH_EVIDENCE_LINES_DEFAULT = 10;
 const ENV_MAX_CONCURRENCY = Number(process.env.MAX_CONCURRENCY ?? 5);
 export const BATCH_CONCURRENCY_MAX = Number.isFinite(ENV_MAX_CONCURRENCY) && ENV_MAX_CONCURRENCY >= BATCH_CONCURRENCY_MIN
   ? Math.floor(ENV_MAX_CONCURRENCY)
@@ -48,6 +50,8 @@ export const AnalyzeLogsBatchRequestSchema = z
     sinceMinutes: z.number().int().positive().max(ANALYZE_MAX_HOURS * 60).optional(),
     maxLines: z.number().int().positive().max(ANALYZE_MAX_LINES_REQUEST).optional().default(300),
     concurrency: z.number().int().min(BATCH_CONCURRENCY_MIN).max(BATCH_CONCURRENCY_MAX).optional().default(BATCH_CONCURRENCY_DEFAULT),
+    mode: z.enum(['analyze', 'raw', 'both']).optional(),
+    evidenceLines: z.number().int().positive().max(BATCH_EVIDENCE_LINES_MAX).optional().default(BATCH_EVIDENCE_LINES_DEFAULT),
     analyze: z.boolean().optional().default(true),
     collectOnly: z.boolean().optional()
   })
@@ -110,6 +114,12 @@ export const AnalyzeLogsBatchResultOkSchema = z
       })
       .optional(),
     no_logs: z.boolean().optional(),
+    evidence: z.array(
+      z.object({
+        ts: z.string(),
+        line: z.string()
+      }).strict()
+    ).optional(),
     logs: z.string().optional(),
     message: z.string().optional()
   })
@@ -275,6 +285,18 @@ export const LogExplainerJsonSchemas = {
                   additionalProperties: false
                 },
                 no_logs: { type: 'boolean' },
+                evidence: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    required: ['ts', 'line'],
+                    properties: {
+                      ts: { type: 'string' },
+                      line: { type: 'string' }
+                    },
+                    additionalProperties: false
+                  }
+                },
                 logs: { type: 'string' },
                 message: { type: 'string' }
               },

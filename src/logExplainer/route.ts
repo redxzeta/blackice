@@ -3,6 +3,7 @@ import { log } from '../log.js';
 import {
   AnalyzeLogsBatchRequestSchema,
   AnalyzeLogsBatchResponseSchema,
+  BATCH_EVIDENCE_LINES_DEFAULT,
   AnalyzeLogsIncrementalRequestSchema,
   AnalyzeLogsIncrementalResponseSchema,
   AnalyzeLogsRequestSchema,
@@ -26,7 +27,11 @@ import {
 } from './logCollector.js';
 import { analyzeLogsWithOllama } from './ollamaClient.js';
 import { SYSTEM_PROMPT, buildUserPrompt, truncateLogs, type AnalyzePromptRequest } from './promptTemplates.js';
-import { ensureReadOnlyAnalysisOutput, sanitizeReadOnlyAnalysisOutput } from './outputSafety.js';
+import {
+  ensureReadOnlyAnalysisOutput,
+  sanitizeReadOnlyAnalysisOutput,
+  sanitizeReadOnlyEvidenceLine
+} from './outputSafety.js';
 import { errMessage, toHttpError } from '../http/errors.js';
 import { getRequestId } from '../http/requestLogging.js';
 import { parseBodyOrRespond } from '../http/validation.js';
@@ -41,6 +46,35 @@ type AnalysisResult = {
     reasons: string[];
   };
 };
+
+type BatchMode = 'analyze' | 'raw' | 'both';
+type EvidenceLine = { ts: string; line: string };
+
+function resolveBatchMode(input: { mode?: BatchMode; analyze?: boolean; collectOnly?: boolean }): BatchMode {
+  if (input.mode) {
+    return input.mode;
+  }
+  if (input.collectOnly === true || input.analyze === false) {
+    return 'raw';
+  }
+  return 'analyze';
+}
+
+function buildEvidence(rawLogs: string, requestedLines?: number): EvidenceLine[] {
+  const lines = rawLogs
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.length > 0)
+    .slice(-Math.max(1, requestedLines ?? BATCH_EVIDENCE_LINES_DEFAULT));
+
+  return lines.map((line) => {
+    const match = line.match(/^(\d{4}-\d{2}-\d{2}T[^\s]+)\s+(.*)$/);
+    if (match) {
+      return { ts: match[1], line: sanitizeReadOnlyEvidenceLine(match[2]) };
+    }
+    return { ts: '', line: sanitizeReadOnlyEvidenceLine(line) };
+  });
+}
 
 function extractSelectorFromLokiTarget(target: string): string {
   if (!target.startsWith('loki:')) {
@@ -195,7 +229,9 @@ export function registerLogExplainerRoutes(app: Express): void {
             hours: 'number (optional)',
             sinceMinutes: 'number (optional; overrides hours for source=loki)',
             maxLines: 'number (optional)',
-            concurrency: 'number (optional)'
+            concurrency: 'number (optional)',
+            mode: 'analyze | raw | both (optional; default analyze)',
+            evidenceLines: 'number (optional; default 10, max 50)'
           },
           responseSchema: LogExplainerJsonSchemas.analyzeLogsBatchResponse
         },
@@ -278,6 +314,11 @@ export function registerLogExplainerRoutes(app: Express): void {
       }
 
       const source = body.source;
+      const mode = resolveBatchMode({
+        mode: body.mode,
+        analyze: body.analyze,
+        collectOnly: body.collectOnly
+      });
 
       if (
         source === 'loki' &&
@@ -301,14 +342,30 @@ export function registerLogExplainerRoutes(app: Express): void {
         try {
           const collected = await collectLokiBatchLogs(lokiRequest);
           fallbackTarget = collected.query;
-          const shouldAnalyze = body.analyze !== false && body.collectOnly !== true;
+          const evidence = buildEvidence(collected.logs, body.evidenceLines);
 
-          if (!shouldAnalyze) {
+          if (mode === 'raw') {
             result = {
               target: collected.query,
               ok: true,
-              logs: collected.logs,
-              message: collected.logs.trim() ? 'Logs collected' : 'No logs collected (collect-only mode)'
+              evidence,
+              message: collected.logs.trim() ? 'Logs collected (raw mode)' : 'No logs collected (raw mode)'
+            };
+          } else if (mode === 'both') {
+            const analysisRequest: AnalyzePromptRequest = {
+              source: 'loki',
+              target: collected.query,
+              hours: collected.hours,
+              maxLines: collected.limit,
+              analyze: body.analyze,
+              collectOnly: body.collectOnly
+            };
+            const analysisResult = await analyzeFromRawLogs(analysisRequest, collected.logs);
+            result = {
+              target: collected.query,
+              ok: true,
+              evidence,
+              ...analysisResult
             };
           } else {
             const analysisRequest: AnalyzePromptRequest = {
@@ -411,14 +468,14 @@ export function registerLogExplainerRoutes(app: Express): void {
               })
             : await collectLogs(collectorRequest);
 
-          const shouldAnalyze = analysisRequest.analyze !== false && analysisRequest.collectOnly !== true;
+          const evidence = buildEvidence(rawLogs, body.evidenceLines);
 
-          if (!shouldAnalyze) {
+          if (mode === 'raw') {
             return {
               target,
               ok: true,
-              logs: rawLogs,
-              message: rawLogs.trim() ? 'Logs collected' : 'No logs collected (collect-only mode)'
+              evidence,
+              message: rawLogs.trim() ? 'Logs collected (raw mode)' : 'No logs collected (raw mode)'
             };
           }
 
@@ -428,6 +485,7 @@ export function registerLogExplainerRoutes(app: Express): void {
             return {
               target,
               ok: true,
+              evidence: mode === 'both' ? evidence : undefined,
               no_logs: true,
               message: analysisResult.message
             };
@@ -436,6 +494,7 @@ export function registerLogExplainerRoutes(app: Express): void {
           return {
             target,
             ok: true,
+            evidence: mode === 'both' ? evidence : undefined,
             ...analysisResult
           } as AnalyzeLogsBatchResultOk;
         } catch (error: unknown) {

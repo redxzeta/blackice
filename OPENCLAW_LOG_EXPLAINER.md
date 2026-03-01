@@ -106,6 +106,8 @@ Example Loki batch request (structured filters):
   "contains": "request_id=...",
   "start": "2026-03-01T04:00:00Z",
   "end": "2026-03-01T04:15:00Z",
+  "mode": "both",
+  "evidenceLines": 10,
   "limit": 2000
 }
 ```
@@ -148,7 +150,13 @@ Example batch response shape:
     {
       "target": "/var/log/remote/paperless-ngx.log",
       "ok": true,
-      "analysis": "## Summary\n..."
+      "analysis": "## Summary\n...",
+      "evidence": [
+        {
+          "ts": "2026-03-01T04:07:12.001Z",
+          "line": "request_id=openclaw-123 upstream timeout"
+        }
+      ]
     },
     {
       "target": "/var/log/remote/docker.log",
