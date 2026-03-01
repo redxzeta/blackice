@@ -3,22 +3,23 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import type { AnalyzeLogsBatchLokiRequest, AnalyzeLogsRequest } from './schema.js';
+import { getRuntimeConfig } from '../config/runtimeConfig.js';
 
-const LOG_COLLECTION_TIMEOUT_MS = Number(process.env.LOG_COLLECTION_TIMEOUT_MS ?? 15_000);
-const MAX_COMMAND_BYTES = Number(process.env.MAX_COMMAND_BYTES ?? 2_000_000);
-const MAX_HOURS = Number(process.env.MAX_QUERY_HOURS ?? process.env.MAX_HOURS ?? 168);
-const MAX_LINES_CAP = Number(process.env.MAX_LINES ?? process.env.MAX_LINES_CAP ?? 2_000);
-const LOKI_BASE_URL = String(process.env.LOKI_BASE_URL ?? '').trim().replace(/\/$/, '');
-const LOKI_TENANT_ID = String(process.env.LOKI_TENANT_ID ?? '').trim();
-const LOKI_AUTH_BEARER = String(process.env.LOKI_AUTH_BEARER ?? '').trim();
-const LOKI_TIMEOUT_MS = Number(process.env.LOKI_TIMEOUT_MS ?? LOG_COLLECTION_TIMEOUT_MS);
-const LOKI_MAX_WINDOW_MINUTES = Number(process.env.LOKI_MAX_WINDOW_MINUTES ?? 60);
-const LOKI_DEFAULT_WINDOW_MINUTES = Number(process.env.LOKI_DEFAULT_WINDOW_MINUTES ?? 15);
-const LOKI_MAX_LINES_CAP = Number(process.env.LOKI_MAX_LINES_CAP ?? MAX_LINES_CAP);
-const LOKI_MAX_RESPONSE_BYTES = Number(process.env.LOKI_MAX_RESPONSE_BYTES ?? MAX_COMMAND_BYTES);
-const LOKI_REQUIRE_SCOPE_LABELS =
-  String(process.env.LOKI_REQUIRE_SCOPE_LABELS ?? 'true').trim().toLowerCase() !== 'false';
-const LOKI_RULES_FILE_RAW = String(process.env.LOKI_RULES_FILE ?? '').trim();
+const runtimeConfig = getRuntimeConfig();
+const LOG_COLLECTION_TIMEOUT_MS = Number(runtimeConfig.limits.logCollectionTimeoutMs);
+const MAX_COMMAND_BYTES = Number(runtimeConfig.limits.maxCommandBytes);
+const MAX_HOURS = Number(runtimeConfig.limits.maxQueryHours);
+const MAX_LINES_CAP = Number(runtimeConfig.limits.maxLinesCap);
+const LOKI_BASE_URL = String(runtimeConfig.loki.baseUrl).trim().replace(/\/$/, '');
+const LOKI_TENANT_ID = String(runtimeConfig.loki.tenantId).trim();
+const LOKI_AUTH_BEARER = String(runtimeConfig.loki.authBearer).trim();
+const LOKI_TIMEOUT_MS = Number(runtimeConfig.loki.timeoutMs);
+const LOKI_MAX_WINDOW_MINUTES = Number(runtimeConfig.loki.maxWindowMinutes);
+const LOKI_DEFAULT_WINDOW_MINUTES = Number(runtimeConfig.loki.defaultWindowMinutes);
+const LOKI_MAX_LINES_CAP = Number(runtimeConfig.loki.maxLinesCap);
+const LOKI_MAX_RESPONSE_BYTES = Number(runtimeConfig.loki.maxResponseBytes);
+const LOKI_REQUIRE_SCOPE_LABELS = Boolean(runtimeConfig.loki.requireScopeLabels);
+const LOKI_RULES_FILE_RAW = String(runtimeConfig.loki.rulesFile).trim();
 
 type LokiStreamResult = {
   stream?: Record<string, string>;

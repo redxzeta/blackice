@@ -1,0 +1,14 @@
+job: journald
+allowedLabels:
+  - job
+  - host
+  - unit
+  - app
+  - service_name
+hosts:
+  - owonto
+  - uwuntu
+units:
+  - openclaw.service
+  - blackice-router.service
+  - promtail.service

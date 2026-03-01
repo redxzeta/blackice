@@ -6,19 +6,7 @@ The Log Explainer endpoint is part of the main server process (`src/server.ts`).
 
 ```bash
 PORT=3000 \
-OLLAMA_BASE_URL=http://192.168.1.230:11434 \
-OLLAMA_MODEL=qwen2.5:14b \
-OLLAMA_TIMEOUT_MS=45000 \
-OLLAMA_RETRY_ATTEMPTS=2 \
-OLLAMA_RETRY_BACKOFF_MS=1000 \
-LOKI_BASE_URL=http://192.168.1.110:3100 \
-LOKI_TIMEOUT_MS=10000 \
-LOKI_MAX_WINDOW_MINUTES=60 \
-LOKI_DEFAULT_WINDOW_MINUTES=15 \
-LOKI_MAX_LINES_CAP=2000 \
-LOKI_MAX_RESPONSE_BYTES=2000000 \
-LOKI_REQUIRE_SCOPE_LABELS=true \
-LOKI_RULES_FILE=./config/loki-rules.yaml \
+BLACKICE_CONFIG_FILE=./config/blackice.local.yaml \
 npm start
 ```
 
@@ -73,8 +61,8 @@ curl -sS http://127.0.0.1:3000/analyze/logs/batch \
     "source": "loki",
     "filters": {
       "job": "journald",
-    "host": "owonto",
-    "unit": "blackice-router.service"
+      "host": "owonto",
+      "unit": "blackice-router.service"
     },
     "contains": "request_id=...",
     "start": "2026-03-01T04:00:00Z",
@@ -96,7 +84,7 @@ curl -sS http://127.0.0.1:3000/analyze/logs/batch \
 - Uses only read-only collectors: `journalctl`, `docker logs`, and Loki query_range.
 - Loki source is read-only via `/loki/api/v1/query_range`.
 - Loki selectors are constructed internally from validated `filters` (raw `query` and selector strings are rejected).
-- Loki allowlist rules are loaded from `LOKI_RULES_FILE` YAML.
+- Loki/Ollama defaults are loaded from `BLACKICE_CONFIG_FILE` YAML; env vars can override.
 - No shell mode execution (`spawn` with `shell: false`).
 - Command output byte caps are enforced.
 - Loki guards: default 15-minute window, max window (default 60 minutes), max line cap, max response bytes, and scoped-label requirement (`host` or `unit`) unless `allowUnscoped: true`.

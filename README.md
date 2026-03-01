@@ -20,12 +20,12 @@ flowchart LR
   BI -->|"LLM generation"| OL
   LXC -->|"rsyslog forward (TCP 514)"| BI
   BI -->|"writes remote logs"| RF
-  BI -->|"source=file target=/var/log/remote/*.log"| RF
+  BI -->|"source=loki (query_range)"| RF
 ```
 
 ## Requirements
 - Node.js 18+
-- Ollama reachable at `http://<OLLAMA_HOST>:11434` (or set `OLLAMA_BASE_URL`)
+- Environment config YAML present (`BLACKICE_CONFIG_FILE`, default `./config/blackice.local.yaml`)
 
 ## Install
 ```bash
@@ -36,7 +36,7 @@ npm run build
 ## Run
 ```bash
 PORT=3000 \
-OLLAMA_BASE_URL=http://<OLLAMA_HOST>:11434 \
+BLACKICE_CONFIG_FILE=./config/blackice.local.yaml \
 ACTIONS_ENABLED=true \
 LOG_LEVEL=info \
 npm start
@@ -97,6 +97,7 @@ Security controls:
 - `OLLAMA_BASE_URL` (default: `http://localhost:11434`)
 - `OLLAMA_MODEL` (default: `qwen2.5:14b`)
 - `PORT` (default: `3000`)
+- `BLACKICE_CONFIG_FILE` (default: `./config/blackice.local.yaml`; use `./config/blackice.e2e.yaml` or `./config/blackice.prod.yaml`)
 - `ACTIONS_ENABLED` (`true`/`false`, default `true`)
 - `LOG_LEVEL` (`info`/`debug`, default `info`)
 - `ALLOWLIST_LOG_PATHS` (comma-separated absolute files or directories)
@@ -134,6 +135,14 @@ units: [openclaw.service, blackice-router.service, promtail.service]
 ```
 
 Example file: `config/loki-rules.example.yaml`
+
+Environment config files:
+- `config/blackice.local.yaml`
+- `config/blackice.e2e.yaml`
+- `config/blackice.prod.yaml`
+
+Config precedence:
+- Environment variables override YAML values.
 
 ## Quick Tests
 Streaming CHAT:
