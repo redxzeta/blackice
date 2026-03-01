@@ -69,12 +69,14 @@ export function requestLoggingMiddleware(req: Request, res: Response, next: Next
 
     const latencyMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
 
+    const status = completed ? res.statusCode : 499;
+
     log.info('http_request', {
       request_id: requestId,
       method: req.method,
       path: req.path,
       route: formatRoute(req),
-      status: res.statusCode,
+      status,
       latency_ms: Number(latencyMs.toFixed(3)),
       timestamp: new Date().toISOString(),
       completed
