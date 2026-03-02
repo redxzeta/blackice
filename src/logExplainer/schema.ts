@@ -110,9 +110,22 @@ export const AnalyzeLogsBatchRequestSchema = z
   })
   .strict();
 
+const LokiDiscoverySchema = z
+  .object({
+    job: z.string().optional(),
+    allowedLabels: z.array(z.string()),
+    hosts: z.array(z.string()),
+    units: z.array(z.string()),
+    hasHostsRegex: z.boolean(),
+    hasUnitsRegex: z.boolean(),
+    requireScopeLabels: z.boolean()
+  })
+  .strict();
+
 export const AnalyzeLogsTargetsResponseSchema = z
   .object({
-    targets: z.array(z.string())
+    targets: z.array(z.string()),
+    discovery: LokiDiscoverySchema.optional()
   })
   .strict();
 
@@ -244,6 +257,20 @@ export const LogExplainerJsonSchemas = {
       targets: {
         type: 'array',
         items: { type: 'string' }
+      },
+      discovery: {
+        type: 'object',
+        required: ['allowedLabels', 'hosts', 'units', 'hasHostsRegex', 'hasUnitsRegex', 'requireScopeLabels'],
+        properties: {
+          job: { type: 'string' },
+          allowedLabels: { type: 'array', items: { type: 'string' } },
+          hosts: { type: 'array', items: { type: 'string' } },
+          units: { type: 'array', items: { type: 'string' } },
+          hasHostsRegex: { type: 'boolean' },
+          hasUnitsRegex: { type: 'boolean' },
+          requireScopeLabels: { type: 'boolean' }
+        },
+        additionalProperties: false
       }
     },
     additionalProperties: false
