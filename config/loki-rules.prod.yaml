@@ -1,0 +1,14 @@
+job: journald
+allowedLabels:
+  - job
+  - host
+  - unit
+  - app
+  - service_name
+hosts:
+  - prod-app-1
+  - prod-app-2
+units:
+  - openclaw.service
+  - blackice-router.service
+  - promtail.service

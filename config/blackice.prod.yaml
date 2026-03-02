@@ -1,0 +1,26 @@
+version: 1
+
+ollama:
+  baseUrl: "http://ollama.internal:11434"
+  model: "qwen2.5:14b"
+  timeoutMs: 45000
+  retryAttempts: 2
+  retryBackoffMs: 1000
+
+loki:
+  baseUrl: "http://loki.internal:3100"
+  timeoutMs: 10000
+  maxWindowMinutes: 60
+  defaultWindowMinutes: 15
+  maxLinesCap: 2000
+  maxResponseBytes: 2000000
+  requireScopeLabels: true
+  rulesFile: "./config/loki-rules.prod.yaml"
+
+limits:
+  logCollectionTimeoutMs: 15000
+  maxCommandBytes: 2000000
+  maxQueryHours: 168
+  maxLinesCap: 2000
+  maxConcurrency: 5
+  maxLogChars: 40000

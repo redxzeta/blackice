@@ -1,0 +1,17 @@
+job: journald
+allowedLabels:
+  - job
+  - host
+  - unit
+  - app
+  - service_name
+hosts:
+  - owonto
+  - uwuntu
+units:
+  - openclaw.service
+  - blackice-router.service
+  - promtail.service
+# Optional regex allowlists:
+# hostsRegex: "^prod-(api|worker)-\\d+$"
+# unitsRegex: "^[a-z0-9-]+\\.service$"

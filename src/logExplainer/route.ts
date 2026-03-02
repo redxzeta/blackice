@@ -3,26 +3,20 @@ import { log } from '../log.js';
 import {
   AnalyzeLogsBatchRequestSchema,
   AnalyzeLogsBatchResponseSchema,
-  AnalyzeLogsIncrementalRequestSchema,
-  AnalyzeLogsIncrementalResponseSchema,
   AnalyzeLogsRequestSchema,
   AnalyzeLogsResponseSchema,
   AnalyzeLogsTargetsResponseSchema,
   LogExplainerJsonSchemas,
   type AnalyzeLogsBatchResultError,
   type AnalyzeLogsBatchResultOk,
-  type AnalyzeLogsIncrementalResponse,
   type AnalyzeLogsRequest
 } from './schema.js';
 import {
   checkLokiHealth,
-  collectFileLogsIncremental,
   collectLogs,
   collectLokiBatchLogs,
-  collectLokiLogs,
-  getAllowedLogFileTargets,
-  getLokiSyntheticTargets,
-  validateAllowedLokiSelector
+  ensureLokiRulesConfigured,
+  getLokiSyntheticTargets
 } from './logCollector.js';
 import { analyzeLogsWithOllama } from './ollamaClient.js';
 import { SYSTEM_PROMPT, buildUserPrompt, truncateLogs, type AnalyzePromptRequest } from './promptTemplates.js';
@@ -41,19 +35,6 @@ type AnalysisResult = {
     reasons: string[];
   };
 };
-
-function extractSelectorFromLokiTarget(target: string): string {
-  if (!target.startsWith('loki:')) {
-    throw Object.assign(new Error(`invalid loki target: ${target}`), { status: 400 });
-  }
-
-  const selector = target.slice('loki:'.length).trim();
-  if (!selector) {
-    throw Object.assign(new Error('loki target selector cannot be empty'), { status: 400 });
-  }
-
-  return selector;
-}
 
 async function analyzeOneRequest(request: AnalyzeLogsRequest): Promise<AnalysisResult> {
   const rawLogs = await collectLogs(request);
@@ -128,9 +109,15 @@ async function runConcurrent<T, R>(items: T[], concurrency: number, worker: (ite
 
 export function registerLogExplainerRoutes(app: Express): void {
   app.get('/analyze/logs/targets', (_req: Request, res: Response) => {
-    const targets = [...getAllowedLogFileTargets(), ...getLokiSyntheticTargets()];
-    const body = AnalyzeLogsTargetsResponseSchema.parse({ targets });
-    res.status(200).json(body);
+    try {
+      ensureLokiRulesConfigured();
+      const targets = [...getLokiSyntheticTargets()];
+      const body = AnalyzeLogsTargetsResponseSchema.parse({ targets });
+      res.status(200).json(body);
+    } catch (error: unknown) {
+      const httpError = toHttpError(error);
+      res.status(httpError.status).json({ error: httpError.message });
+    }
   });
 
   app.get('/health/loki', async (_req: Request, res: Response) => {
@@ -159,34 +146,20 @@ export function registerLogExplainerRoutes(app: Express): void {
           method: 'POST',
           path: '/analyze/logs',
           requestSchema: {
-            source: 'journalctl | journald | docker | file',
+            source: 'journalctl | journald | docker',
             target: 'string',
             hours: 'number',
             maxLines: 'number'
           },
           responseSchema: LogExplainerJsonSchemas.analyzeLogsResponse
         },
-        incremental: {
-          method: 'POST',
-          path: '/analyze/logs/incremental',
-          requestSchema: {
-            source: 'file',
-            target: 'string',
-            cursor: 'number (optional)',
-            hours: 'number (optional)',
-            maxLines: 'number (optional)'
-          },
-          responseSchema: LogExplainerJsonSchemas.analyzeLogsIncrementalResponse
-        },
         batch: {
           method: 'POST',
           path: '/analyze/logs/batch',
           requestSchema: {
-            source: 'file | journald | loki',
-            targets: 'string[] (optional; file paths, journald units, or synthetic loki:{...} targets)',
-            selectors: 'string[] (optional; direct Loki selectors when source=loki)',
-            query: 'string (optional; raw LogQL for source=loki)',
-            filters: 'record<string,string> (optional; source=loki selector labels)',
+            source: 'journald | loki',
+            targets: 'string[] (optional; journald units)',
+            filters: 'record<string,string> (required when source=loki; selector labels)',
             contains: 'string (optional; source=loki line filter)',
             start: 'ISO-8601 datetime (optional; source=loki)',
             end: 'ISO-8601 datetime (optional; source=loki)',
@@ -209,67 +182,6 @@ export function registerLogExplainerRoutes(app: Express): void {
     });
   });
 
-  app.post('/analyze/logs/incremental', async (req: Request, res: Response) => {
-    try {
-      const body = parseBodyOrRespond(AnalyzeLogsIncrementalRequestSchema, req.body, res);
-      if (!body) {
-        return;
-      }
-
-      const collected = await collectFileLogsIncremental({
-        target: body.target,
-        cursor: body.cursor,
-        maxLines: body.maxLines
-      });
-
-      if (!collected.logs.trim()) {
-        const noLogsOut: AnalyzeLogsIncrementalResponse = {
-          source: 'file',
-          target: body.target,
-          cursor: body.cursor,
-          fromCursor: collected.fromCursor,
-          nextCursor: collected.nextCursor,
-          rotated: collected.rotated,
-          truncatedByBytes: collected.truncatedByBytes,
-          noNewLogs: true
-        };
-        res.status(200).json(AnalyzeLogsIncrementalResponseSchema.parse(noLogsOut));
-        return;
-      }
-
-      const analyzed = await analyzeFromRawLogs(
-        {
-          source: 'file',
-          target: body.target,
-          hours: body.hours,
-          maxLines: body.maxLines
-        },
-        collected.logs
-      );
-
-      const bodyOut: AnalyzeLogsIncrementalResponse = {
-        source: 'file',
-        target: body.target,
-        cursor: body.cursor,
-        fromCursor: collected.fromCursor,
-        nextCursor: collected.nextCursor,
-        rotated: collected.rotated,
-        truncatedByBytes: collected.truncatedByBytes,
-        noNewLogs: false,
-        ...analyzed
-      };
-      res.status(200).json(AnalyzeLogsIncrementalResponseSchema.parse(bodyOut));
-    } catch (error: unknown) {
-      const httpError = toHttpError(error);
-      log.error('log_explainer_incremental_failed', {
-        request_id: getRequestId(res),
-        status: httpError.status,
-        message: httpError.message
-      });
-      res.status(httpError.status).json({ error: httpError.message });
-    }
-  });
-
   app.post('/analyze/logs/batch', async (req: Request, res: Response) => {
     try {
       const body = parseBodyOrRespond(AnalyzeLogsBatchRequestSchema, req.body, res);
@@ -279,13 +191,33 @@ export function registerLogExplainerRoutes(app: Express): void {
 
       const source = body.source;
 
-      if (
-        source === 'loki' &&
-        ((typeof body.query === 'string' && body.query.trim().length > 0) || body.filters !== undefined)
-      ) {
+      if (source === 'loki') {
+        if (typeof body.query === 'string' && body.query.trim().length > 0) {
+          res.status(403).json({
+            error: 'Raw Loki query is not allowed',
+            details: 'Use filters so BlackIce can construct a validated selector internally'
+          });
+          return;
+        }
+
+        if ((body.selectors && body.selectors.length > 0) || (body.targets && body.targets.length > 0)) {
+          res.status(403).json({
+            error: 'Direct Loki selectors are not allowed',
+            details: 'Use source=loki with filters instead of selectors[] or loki:{...} targets'
+          });
+          return;
+        }
+
+        if (!body.filters) {
+          res.status(400).json({
+            error: 'Missing Loki filters',
+            details: 'Provide filters for source=loki'
+          });
+          return;
+        }
+
         const lokiRequest = {
           source: 'loki' as const,
-          query: body.query,
           filters: body.filters,
           contains: body.contains,
           start: body.start,
@@ -294,9 +226,6 @@ export function registerLogExplainerRoutes(app: Express): void {
           allowUnscoped: body.allowUnscoped
         };
         let fallbackTarget = 'loki';
-        if (typeof body.query === 'string' && body.query.trim().length > 0) {
-          fallbackTarget = body.query.trim();
-        }
         let result: AnalyzeLogsBatchResultOk | AnalyzeLogsBatchResultError;
         try {
           const collected = await collectLokiBatchLogs(lokiRequest);
@@ -351,39 +280,14 @@ export function registerLogExplainerRoutes(app: Express): void {
       let candidateTargets: string[];
       let targets: string[];
 
-      if (source === 'file') {
-        const allowedTargets = getAllowedLogFileTargets();
-        const allowedSet = new Set(allowedTargets);
-        candidateTargets = body.targets && body.targets.length > 0 ? body.targets : allowedTargets;
-        targets = candidateTargets.filter((target) => allowedSet.has(target));
-
-        if (targets.length === 0) {
-          res.status(400).json({
-            error: 'No valid targets to analyze',
-            details: 'Provide targets listed in GET /analyze/logs/targets'
-          });
-          return;
-        }
-      } else if (source === 'journald') {
+      if (source === 'journald') {
         candidateTargets = body.targets && body.targets.length > 0 ? body.targets : ['all'];
         targets = candidateTargets;
       } else {
-        const selectorInputs = body.selectors && body.selectors.length > 0
-          ? body.selectors
-          : (body.targets && body.targets.length > 0
-            ? body.targets.map((target) => extractSelectorFromLokiTarget(target))
-            : []);
-
-        if (selectorInputs.length === 0) {
-          res.status(400).json({
-            error: 'No Loki selectors provided',
-            details: 'Provide selectors[] or loki:{...} entries in targets[]'
-          });
-          return;
-        }
-
-        candidateTargets = selectorInputs;
-        targets = selectorInputs.map((selector) => validateAllowedLokiSelector(selector));
+        res.status(400).json({
+          error: `Unsupported source: ${source}`
+        });
+        return;
       }
 
       const results = await runConcurrent(targets, body.concurrency, async (target) => {
@@ -398,18 +302,11 @@ export function registerLogExplainerRoutes(app: Express): void {
 
         const collectorRequest: AnalyzeLogsRequest = {
           ...analysisRequest,
-          source: source === 'journald' ? 'journalctl' : 'file'
+          source: 'journalctl'
         };
 
         try {
-          const rawLogs = source === 'loki'
-            ? await collectLokiLogs({
-                selector: target,
-                hours: body.hours,
-                sinceMinutes: body.sinceMinutes,
-                maxLines: body.maxLines
-              })
-            : await collectLogs(collectorRequest);
+          const rawLogs = await collectLogs(collectorRequest);
 
           const shouldAnalyze = analysisRequest.analyze !== false && analysisRequest.collectOnly !== true;
 

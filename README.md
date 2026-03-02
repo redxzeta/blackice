@@ -20,12 +20,12 @@ flowchart LR
   BI -->|"LLM generation"| OL
   LXC -->|"rsyslog forward (TCP 514)"| BI
   BI -->|"writes remote logs"| RF
-  BI -->|"source=file target=/var/log/remote/*.log"| RF
+  BI -->|"source=loki (query_range)"| RF
 ```
 
 ## Requirements
 - Node.js 18+
-- Ollama reachable at `http://<OLLAMA_HOST>:11434` (or set `OLLAMA_BASE_URL`)
+- Environment config YAML present (`BLACKICE_CONFIG_FILE`, default `./config/blackice.local.yaml`)
 
 ## Install
 ```bash
@@ -36,7 +36,7 @@ npm run build
 ## Run
 ```bash
 PORT=3000 \
-OLLAMA_BASE_URL=http://<OLLAMA_HOST>:11434 \
+BLACKICE_CONFIG_FILE=./config/blackice.local.yaml \
 ACTIONS_ENABLED=true \
 LOG_LEVEL=info \
 npm start
@@ -97,14 +97,12 @@ Security controls:
 - `OLLAMA_BASE_URL` (default: `http://localhost:11434`)
 - `OLLAMA_MODEL` (default: `qwen2.5:14b`)
 - `PORT` (default: `3000`)
+- `BLACKICE_CONFIG_FILE` (default: `./config/blackice.local.yaml`; use `./config/blackice.e2e.yaml` or `./config/blackice.prod.yaml`)
 - `ACTIONS_ENABLED` (`true`/`false`, default `true`)
 - `LOG_LEVEL` (`info`/`debug`, default `info`)
 - `ALLOWLIST_LOG_PATHS` (comma-separated absolute files or directories)
-- `ALLOWED_LOG_FILES` (comma-separated absolute files for `source: "file"` in `/analyze/logs`)
 - `LOKI_BASE_URL` (enables Loki log source for `/analyze/logs/batch` when set)
-- `ALLOWED_LOKI_SELECTORS` (newline or semicolon separated selectors, or JSON array)
-- `LOKI_TENANT_ID` (optional tenant header `X-Scope-OrgID`)
-- `LOKI_AUTH_BEARER` (optional bearer auth token for Loki)
+- `LOKI_RULES_FILE` (required path to YAML rules file when `LOKI_BASE_URL` is set)
 - `LOKI_TIMEOUT_MS` (default `10000`; timeout for Loki `query_range`)
 - `LOKI_MAX_WINDOW_MINUTES` (default `60`; max `start`/`end` window for Loki query mode)
 - `LOKI_DEFAULT_WINDOW_MINUTES` (default `15`; default window when `start`/`end` omitted)
@@ -123,6 +121,26 @@ Security controls:
 - `READINESS_STRICT` (`1` or `0`, default `1`; when `1`, `/readyz` returns `503` if upstream is unavailable)
 - `BUILD_GIT_SHA` (optional; exposed by `GET /version`)
 - `BUILD_TIME` (optional ISO timestamp; exposed by `GET /version`)
+
+Loki rules YAML format:
+```yaml
+job: journald
+allowedLabels: [job, host, unit, app, service_name]
+hosts: [owonto, uwuntu]
+units: [openclaw.service, blackice-router.service, promtail.service]
+# hostsRegex: "^prod-(api|worker)-\\d+$"
+# unitsRegex: "^[a-z0-9-]+\\.service$"
+```
+
+Example file: `config/loki-rules.example.yaml`
+
+Environment config files:
+- `config/blackice.local.yaml`
+- `config/blackice.e2e.yaml`
+- `config/blackice.prod.yaml`
+
+Config precedence:
+- `BLACKICE_CONFIG_FILE` selects which YAML file is loaded.
 
 ## Quick Tests
 Streaming CHAT:
@@ -223,32 +241,7 @@ curl -sS http://127.0.0.1:3000/analyze/logs \
   }'
 ```
 
-Loki batch analysis route:
-```bash
-curl -sS http://127.0.0.1:3000/analyze/logs/batch \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "source": "loki",
-    "targets": ["loki:{job=\"openclaw\",host=\"uwuntu\"}"],
-    "hours": 1,
-    "maxLines": 300
-  }'
-```
-
-Loki batch analysis route (raw query mode):
-```bash
-curl -sS http://127.0.0.1:3000/analyze/logs/batch \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "source": "loki",
-    "query": "{job=\"journald\",host=\"owonto\",unit=\"blackice-router.service\"} |= \"request_id=\"",
-    "start": "2026-03-01T04:00:00Z",
-    "end": "2026-03-01T04:15:00Z",
-    "limit": 500
-  }'
-```
-
-Loki batch analysis route (structured filters mode):
+Loki batch analysis route (rule-validated filters):
 ```bash
 curl -sS http://127.0.0.1:3000/analyze/logs/batch \
   -H 'Content-Type: application/json' \

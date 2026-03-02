@@ -11,7 +11,7 @@ Use the Log Explainer as an HTTP endpoint from OpenClaw.
 Target discovery endpoint:
 - Method: `GET`
 - URL: `http://192.168.1.130:3000/analyze/logs/targets`
-- Purpose: Returns currently approved file targets from `ALLOWED_LOG_FILES`.
+- Purpose: Returns an empty placeholder list in Loki-only mode (structured discovery metadata tracked in issue #48).
 
 Capability/status endpoint:
 - Method: `GET`
@@ -23,21 +23,16 @@ Bootstrap metadata endpoint:
 - URL: `http://192.168.1.130:3000/analyze/logs/metadata`
 - Purpose: Machine-readable endpoint docs and JSON response schemas for OpenClaw self-discovery.
 
-Incremental analysis endpoint:
-- Method: `POST`
-- URL: `http://192.168.1.130:3000/analyze/logs/incremental`
-- Purpose: Analyze only newly appended log data since a previous `cursor` and return `nextCursor`.
-
 Batch analysis endpoint:
 - Method: `POST`
 - URL: `http://192.168.1.130:3000/analyze/logs/batch`
-- Purpose: Analyze all approved targets (or a provided subset) in one request.
+- Purpose: Analyze Loki or journald logs in one request.
 
 ## Request Schema
 
 ```json
 {
-  "source": "journalctl | docker | file",
+  "source": "journalctl | docker",
   "target": "string",
   "hours": 6,
   "maxLines": 300
@@ -63,37 +58,6 @@ Batch analysis endpoint:
 }
 ```
 
-Example target discovery response:
-```json
-{
-  "targets": [
-    "/var/log/remote/paperless-ngx.log",
-    "/var/log/remote/jellyfin.log"
-  ]
-}
-```
-
-Example batch request:
-```json
-{
-  "source": "file",
-  "hours": 6,
-  "maxLines": 300,
-  "concurrency": 2
-}
-```
-
-Example Loki batch request (raw LogQL):
-```json
-{
-  "source": "loki",
-  "query": "{job=\"journald\",host=\"owonto\",unit=\"blackice-router.service\"} |= \"server_started\"",
-  "start": "2026-03-01T04:00:00Z",
-  "end": "2026-03-01T04:15:00Z",
-  "limit": 2000
-}
-```
-
 Example Loki batch request (structured filters):
 ```json
 {
@@ -110,51 +74,19 @@ Example Loki batch request (structured filters):
 }
 ```
 
-Example incremental request:
-```json
-{
-  "source": "file",
-  "target": "/var/log/remote/paperless-ngx.log",
-  "cursor": 0,
-  "hours": 6,
-  "maxLines": 300
-}
-```
-
-Example incremental response shape:
-```json
-{
-  "source": "file",
-  "target": "/var/log/remote/paperless-ngx.log",
-  "cursor": 0,
-  "fromCursor": 0,
-  "nextCursor": 8342,
-  "rotated": false,
-  "truncatedByBytes": false,
-  "noNewLogs": false,
-  "analysis": "## Summary\n..."
-}
-```
-
 Example batch response shape:
 ```json
 {
-  "source": "file",
-  "requestedTargets": 8,
-  "analyzedTargets": 8,
-  "ok": 7,
-  "failed": 1,
+  "source": "loki",
+  "requestedTargets": 1,
+  "analyzedTargets": 1,
+  "ok": 1,
+  "failed": 0,
   "results": [
     {
-      "target": "/var/log/remote/paperless-ngx.log",
+      "target": "{host=\"owonto\",job=\"journald\",unit=\"blackice-router.service\"} |= \"request_id=...\"",
       "ok": true,
       "analysis": "## Summary\n..."
-    },
-    {
-      "target": "/var/log/remote/docker.log",
-      "ok": false,
-      "error": "No logs were collected for the given query",
-      "status": 422
     }
   ]
 }
@@ -162,8 +94,9 @@ Example batch response shape:
 
 ## Notes
 
-- For `source: "file"`, target must be listed in `ALLOWED_LOG_FILES`.
 - For `source: "loki"`, at least one scoping label (`host` or `unit`) is required unless `allowUnscoped: true`.
+- For `source: "loki"`, provide `filters`; raw LogQL `query` and selector strings are rejected.
+- For `source: "loki"`, allowlist rules are loaded from `LOKI_RULES_FILE` YAML.
 - For `source: "loki"`, default time window is last 15 minutes if `start`/`end` are omitted.
 - For `source: "loki"`, max time window is controlled by `LOKI_MAX_WINDOW_MINUTES` (default 60).
 - The service enforces read-only safety; unsafe command-like output is redacted before response.

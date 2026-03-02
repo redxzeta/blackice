@@ -1,23 +1,23 @@
 import { spawn } from 'node:child_process';
-import { access, constants, open as openFile } from 'node:fs/promises';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { parse as parseYaml } from 'yaml';
 import type { AnalyzeLogsBatchLokiRequest, AnalyzeLogsRequest } from './schema.js';
+import { getRuntimeConfig } from '../config/runtimeConfig.js';
 
-const LOG_COLLECTION_TIMEOUT_MS = Number(process.env.LOG_COLLECTION_TIMEOUT_MS ?? 15_000);
-const MAX_COMMAND_BYTES = Number(process.env.MAX_COMMAND_BYTES ?? 2_000_000);
-const MAX_FILE_BYTES = Number(process.env.MAX_FILE_BYTES ?? 2_000_000);
-const MAX_HOURS = Number(process.env.MAX_QUERY_HOURS ?? process.env.MAX_HOURS ?? 168);
-const MAX_LINES_CAP = Number(process.env.MAX_LINES ?? process.env.MAX_LINES_CAP ?? 2_000);
-const LOKI_BASE_URL = String(process.env.LOKI_BASE_URL ?? '').trim().replace(/\/$/, '');
-const LOKI_TENANT_ID = String(process.env.LOKI_TENANT_ID ?? '').trim();
-const LOKI_AUTH_BEARER = String(process.env.LOKI_AUTH_BEARER ?? '').trim();
-const LOKI_TIMEOUT_MS = Number(process.env.LOKI_TIMEOUT_MS ?? LOG_COLLECTION_TIMEOUT_MS);
-const LOKI_MAX_WINDOW_MINUTES = Number(process.env.LOKI_MAX_WINDOW_MINUTES ?? 60);
-const LOKI_DEFAULT_WINDOW_MINUTES = Number(process.env.LOKI_DEFAULT_WINDOW_MINUTES ?? 15);
-const LOKI_MAX_LINES_CAP = Number(process.env.LOKI_MAX_LINES_CAP ?? MAX_LINES_CAP);
-const LOKI_MAX_RESPONSE_BYTES = Number(process.env.LOKI_MAX_RESPONSE_BYTES ?? MAX_COMMAND_BYTES);
-const LOKI_REQUIRE_SCOPE_LABELS =
-  String(process.env.LOKI_REQUIRE_SCOPE_LABELS ?? 'true').trim().toLowerCase() !== 'false';
+const runtimeConfig = getRuntimeConfig();
+const LOG_COLLECTION_TIMEOUT_MS = Number(runtimeConfig.limits.logCollectionTimeoutMs);
+const MAX_COMMAND_BYTES = Number(runtimeConfig.limits.maxCommandBytes);
+const MAX_HOURS = Number(runtimeConfig.limits.maxQueryHours);
+const MAX_LINES_CAP = Number(runtimeConfig.limits.maxLinesCap);
+const LOKI_BASE_URL = String(runtimeConfig.loki.baseUrl).trim().replace(/\/$/, '');
+const LOKI_TIMEOUT_MS = Number(runtimeConfig.loki.timeoutMs);
+const LOKI_MAX_WINDOW_MINUTES = Number(runtimeConfig.loki.maxWindowMinutes);
+const LOKI_DEFAULT_WINDOW_MINUTES = Number(runtimeConfig.loki.defaultWindowMinutes);
+const LOKI_MAX_LINES_CAP = Number(runtimeConfig.loki.maxLinesCap);
+const LOKI_MAX_RESPONSE_BYTES = Number(runtimeConfig.loki.maxResponseBytes);
+const LOKI_REQUIRE_SCOPE_LABELS = Boolean(runtimeConfig.loki.requireScopeLabels);
+const LOKI_RULES_FILE_RAW = String(runtimeConfig.loki.rulesFile).trim();
 
 type LokiStreamResult = {
   stream?: Record<string, string>;
@@ -31,6 +31,17 @@ type LokiQueryRangeResponse = {
     result?: LokiStreamResult[];
   };
 };
+
+type LokiRulesConfig = {
+  job?: string;
+  allowedLabels: Set<string>;
+  hosts: Set<string>;
+  units: Set<string>;
+  hostsRegex: RegExp | null;
+  unitsRegex: RegExp | null;
+};
+
+let cachedLokiRules: LokiRulesConfig | null = null;
 
 function buildError(status: number, message: string): Error & { status: number } {
   const err = new Error(message) as Error & { status: number };
@@ -150,37 +161,116 @@ async function collectDockerLogs(input: AnalyzeLogsRequest): Promise<string> {
   return runAllowedCommand('docker', args);
 }
 
-function parseAllowedFilePaths(): Set<string> {
-  return new Set(
-    String(process.env.ALLOWED_LOG_FILES ?? '')
-      .trimEnd().split(',')
-      .map((value) => value.trim())
-      .filter(Boolean)
-      .map((value) => path.resolve(value))
-  );
-}
-
-function parseAllowedLokiSelectorsRaw(): string[] {
-  const raw = String(process.env.ALLOWED_LOKI_SELECTORS ?? '').trim();
-  if (!raw) {
+function parseStringArray(value: unknown, field: string, required: boolean): string[] {
+  if (value === undefined || value === null) {
+    if (required) {
+      throw buildError(503, `Loki rules file missing required field: ${field}`);
+    }
     return [];
   }
-
-  if (raw.startsWith('[')) {
-    try {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        return parsed.map((v) => String(v).trim()).filter(Boolean);
-      }
-    } catch {
-      // fall back to plain parser
-    }
+  if (!Array.isArray(value)) {
+    throw buildError(503, `Loki rules field "${field}" must be an array of strings`);
   }
 
-  return raw
-    .split(/\n|;/)
-    .map((value) => value.trim())
+  return value
+    .map((entry) => {
+      if (typeof entry !== 'string') {
+        throw buildError(503, `Loki rules field "${field}" must contain only strings`);
+      }
+      return entry.trim();
+    })
     .filter(Boolean);
+}
+
+function parseOptionalRegex(raw: string, field: string): RegExp | null {
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    return new RegExp(raw);
+  } catch {
+    throw buildError(503, `Invalid regex in Loki rules field "${field}"`);
+  }
+}
+
+function matchesAllowlist(value: string, list: Set<string>, regex: RegExp | null): boolean {
+  if (list.size > 0 && list.has(value)) {
+    return true;
+  }
+  if (regex && regex.test(value)) {
+    return true;
+  }
+  return false;
+}
+
+function loadLokiRulesConfig(): LokiRulesConfig {
+  if (cachedLokiRules) {
+    return cachedLokiRules;
+  }
+
+  if (!LOKI_RULES_FILE_RAW) {
+    throw buildError(503, 'LOKI_RULES_FILE is required when Loki source is enabled');
+  }
+
+  const rulesFile = path.resolve(LOKI_RULES_FILE_RAW);
+
+  if (!existsSync(rulesFile)) {
+    throw buildError(503, `Loki rules file not found: ${rulesFile}`);
+  }
+
+  let parsed: unknown;
+  try {
+    const raw = readFileSync(rulesFile, 'utf8');
+    parsed = parseYaml(raw);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw buildError(503, `Failed to read Loki rules file (${rulesFile}): ${message}`);
+  }
+
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw buildError(503, 'Loki rules file must contain a top-level object');
+  }
+
+  const body = parsed as Record<string, unknown>;
+  const allowedLabels = new Set(parseStringArray(body.allowedLabels, 'allowedLabels', true));
+  if (allowedLabels.size === 0) {
+    throw buildError(503, 'Loki rules file must include at least one allowedLabels entry');
+  }
+
+  const job = typeof body.job === 'string' ? body.job.trim() : '';
+  if (body.job !== undefined && typeof body.job !== 'string') {
+    throw buildError(503, 'Loki rules field "job" must be a string');
+  }
+
+  const hosts = new Set(parseStringArray(body.hosts, 'hosts', false));
+  const units = new Set(parseStringArray(body.units, 'units', false));
+
+  let hostsRegexRaw = '';
+  if (body.hostsRegex !== undefined) {
+    if (typeof body.hostsRegex !== 'string') {
+      throw buildError(503, 'Loki rules field "hostsRegex" must be a string');
+    }
+    hostsRegexRaw = body.hostsRegex.trim();
+  }
+
+  let unitsRegexRaw = '';
+  if (body.unitsRegex !== undefined) {
+    if (typeof body.unitsRegex !== 'string') {
+      throw buildError(503, 'Loki rules field "unitsRegex" must be a string');
+    }
+    unitsRegexRaw = body.unitsRegex.trim();
+  }
+
+  cachedLokiRules = {
+    job: job || undefined,
+    allowedLabels,
+    hosts,
+    units,
+    hostsRegex: parseOptionalRegex(hostsRegexRaw, 'hostsRegex'),
+    unitsRegex: parseOptionalRegex(unitsRegexRaw, 'unitsRegex')
+  };
+  return cachedLokiRules;
 }
 
 function parseSimpleSelector(selector: string): Map<string, string> {
@@ -227,13 +317,36 @@ function normalizeSelector(selector: string): string {
   return `{${ordered.map(([key, value]) => `${key}="${value}"`).join(',')}}`;
 }
 
-function isSupersetSelector(candidate: Map<string, string>, base: Map<string, string>): boolean {
-  for (const [key, value] of base.entries()) {
-    if (candidate.get(key) !== value) {
-      return false;
+function validateLokiLabels(labels: Record<string, string>): void {
+  const rules = loadLokiRulesConfig();
+
+  for (const key of Object.keys(labels)) {
+    if (!rules.allowedLabels.has(key)) {
+      throw buildError(403, `Loki label "${key}" is not allowed`);
     }
   }
-  return true;
+
+  if (rules.job) {
+    const job = labels.job;
+    if (!job) {
+      throw buildError(403, 'Loki filters must include job');
+    }
+    if (job !== rules.job) {
+      throw buildError(403, `Loki job "${job}" is not allowed`);
+    }
+  }
+
+  if (typeof labels.host === 'string') {
+    if (!matchesAllowlist(labels.host, rules.hosts, rules.hostsRegex)) {
+      throw buildError(403, `Loki host "${labels.host}" is not allowed`);
+    }
+  }
+
+  if (typeof labels.unit === 'string') {
+    if (!matchesAllowlist(labels.unit, rules.units, rules.unitsRegex)) {
+      throw buildError(403, `Loki unit "${labels.unit}" is not allowed`);
+    }
+  }
 }
 
 export function isLokiEnabled(): boolean {
@@ -241,11 +354,20 @@ export function isLokiEnabled(): boolean {
 }
 
 export function getAllowedLokiSelectors(): string[] {
-  return parseAllowedLokiSelectorsRaw().map(normalizeSelector).sort((a, b) => a.localeCompare(b));
+  return [];
+}
+
+export function ensureLokiRulesConfigured(): void {
+  if (!isLokiEnabled()) {
+    return;
+  }
+  loadLokiRulesConfig();
 }
 
 export function getLokiSyntheticTargets(): string[] {
-  return getAllowedLokiSelectors().map((selector) => `loki:${selector}`);
+  // Loki selector strings are intentionally not accepted by /analyze/logs/batch.
+  // Keep targets empty until structured discovery metadata is added.
+  return [];
 }
 
 export function validateAllowedLokiSelector(selector: string): string {
@@ -255,20 +377,7 @@ export function validateAllowedLokiSelector(selector: string): string {
 
   const normalized = normalizeSelector(selector);
   const candidate = parseSimpleSelector(normalized);
-  const allowed = getAllowedLokiSelectors();
-
-  if (allowed.length === 0) {
-    throw buildError(503, 'loki source is enabled but ALLOWED_LOKI_SELECTORS is empty');
-  }
-
-  const permitted = allowed.some((allowedSelector) => {
-    const base = parseSimpleSelector(allowedSelector);
-    return isSupersetSelector(candidate, base);
-  });
-
-  if (!permitted) {
-    throw buildError(403, 'selector is not allowlisted');
-  }
+  validateLokiLabels(Object.fromEntries(candidate.entries()));
 
   return normalized;
 }
@@ -294,10 +403,6 @@ function extractSelectorExpression(query: string): string {
 }
 
 function ensureAllowlistedSelectorFromQuery(query: string): void {
-  const allowed = getAllowedLokiSelectors();
-  if (!allowed.length) {
-    throw buildError(503, 'loki source is enabled but ALLOWED_LOKI_SELECTORS is empty');
-  }
   const selector = extractSelectorExpression(query);
   validateAllowedLokiSelector(selector);
 }
@@ -324,12 +429,14 @@ export function buildEffectiveLokiQuery(input: AnalyzeLogsBatchLokiRequest): str
   }
 
   if (typeof input.query === 'string' && input.query.trim().length > 0) {
-    return input.query.trim();
+    throw buildError(403, 'raw Loki query is not allowed; use filters');
   }
 
   if (!input.filters) {
     throw buildError(400, 'filters are required when query is not provided');
   }
+
+  validateLokiLabels(input.filters);
 
   const entries = Object.entries(input.filters).sort(([a], [b]) => a.localeCompare(b));
   const selector = entries.map(([key, value]) => `${key}="${escapeLogQLLabelValue(value)}"`).join(',');
@@ -394,14 +501,7 @@ function formatStreamLabels(labels: Record<string, string>): string {
 }
 
 function headersWithAuth(): Record<string, string> {
-  const headers: Record<string, string> = {};
-  if (LOKI_TENANT_ID) {
-    headers['X-Scope-OrgID'] = LOKI_TENANT_ID;
-  }
-  if (LOKI_AUTH_BEARER) {
-    headers.Authorization = `Bearer ${LOKI_AUTH_BEARER}`;
-  }
-  return headers;
+  return {};
 }
 
 export async function checkLokiHealth(): Promise<{ enabled: boolean; ok: boolean; status: number; details: string }> {
@@ -641,14 +741,9 @@ export async function collectLokiBatchLogs(input: AnalyzeLogsBatchLokiRequest): 
   return { query, logs, limit, hours };
 }
 
-export function getAllowedLogFileTargets(): string[] {
-  return Array.from(parseAllowedFilePaths()).sort((a, b) => a.localeCompare(b));
-}
-
 export function getLogCollectorLimits(): {
   maxHours: number;
   maxLinesCap: number;
-  maxFileBytes: number;
   maxCommandBytes: number;
   collectionTimeoutMs: number;
   loki: {
@@ -664,7 +759,6 @@ export function getLogCollectorLimits(): {
   return {
     maxHours: MAX_HOURS,
     maxLinesCap: MAX_LINES_CAP,
-    maxFileBytes: MAX_FILE_BYTES,
     maxCommandBytes: MAX_COMMAND_BYTES,
     collectionTimeoutMs: LOG_COLLECTION_TIMEOUT_MS,
     loki: {
@@ -679,132 +773,6 @@ export function getLogCollectorLimits(): {
   };
 }
 
-export type IncrementalFileLogsResult = {
-  logs: string;
-  fromCursor: number;
-  nextCursor: number;
-  rotated: boolean;
-  truncatedByBytes: boolean;
-};
-
-export async function collectFileLogsIncremental(input: {
-  target: string;
-  cursor: number;
-  maxLines: number;
-}): Promise<IncrementalFileLogsResult> {
-  const safeMaxLines = clampMaxLines(input.maxLines);
-  const requestedPath = path.resolve(input.target);
-  const allowed = parseAllowedFilePaths();
-
-  if (!allowed.has(requestedPath)) {
-    throw buildError(403, 'file target is not in ALLOWED_LOG_FILES');
-  }
-
-  await access(requestedPath, constants.R_OK);
-  const handle = await openFile(requestedPath, 'r');
-  try {
-    const stat = await handle.stat();
-    const size = stat.size;
-    const requestedCursor = Math.max(0, Math.floor(input.cursor));
-    let fromCursor = Math.min(requestedCursor, size);
-    let rotated = false;
-
-    if (requestedCursor > size) {
-      fromCursor = 0;
-      rotated = true;
-    }
-
-    if (fromCursor >= size) {
-      return {
-        logs: '',
-        fromCursor,
-        nextCursor: fromCursor,
-        rotated,
-        truncatedByBytes: false
-      };
-    }
-
-    const availableBytes = size - fromCursor;
-    const readBytesLimit = Math.min(MAX_FILE_BYTES, availableBytes);
-    const truncatedByBytes = availableBytes > MAX_FILE_BYTES;
-    const chunkSize = 64 * 1024;
-    const chunks: Buffer[] = [];
-    let position = fromCursor;
-    let remaining = readBytesLimit;
-
-    while (remaining > 0) {
-      const toRead = Math.min(chunkSize, remaining);
-      const buf = Buffer.allocUnsafe(toRead);
-      const { bytesRead } = await handle.read(buf, 0, toRead, position);
-      if (bytesRead <= 0) {
-        break;
-      }
-      const slice = buf.subarray(0, bytesRead);
-      chunks.push(slice);
-      position += bytesRead;
-      remaining -= bytesRead;
-    }
-
-    const text = Buffer.concat(chunks).toString('utf8');
-    const lines = text.trimEnd().split(/\r?\n/);
-    const logs = lines.slice(-safeMaxLines).join('\n');
-
-    return {
-      logs,
-      fromCursor,
-      nextCursor: position,
-      rotated,
-      truncatedByBytes
-    };
-  } finally {
-    await handle.close();
-  }
-}
-
-async function collectFileLogs(input: AnalyzeLogsRequest): Promise<string> {
-  const safeMaxLines = clampMaxLines(input.maxLines);
-  const requestedPath = path.resolve(input.target);
-  const allowed = parseAllowedFilePaths();
-
-  if (!allowed.has(requestedPath)) {
-    throw buildError(403, 'file target is not in ALLOWED_LOG_FILES');
-  }
-
-  await access(requestedPath, constants.R_OK);
-  const handle = await openFile(requestedPath, 'r');
-  try {
-    const stat = await handle.stat();
-    const chunkSize = 64 * 1024;
-    let position = stat.size;
-    let bytesCollected = 0;
-    let newlineCount = 0;
-    const chunks: Buffer[] = [];
-
-    while (position > 0 && bytesCollected < MAX_FILE_BYTES && newlineCount <= safeMaxLines) {
-      const toRead = Math.min(chunkSize, position);
-      position -= toRead;
-
-      const buf = Buffer.allocUnsafe(toRead);
-      const { bytesRead } = await handle.read(buf, 0, toRead, position);
-      const slice = buf.subarray(0, bytesRead);
-      chunks.unshift(slice);
-      bytesCollected += bytesRead;
-
-      for (let i = 0; i < slice.length; i += 1) {
-        if (slice[i] === 0x0a) {
-          newlineCount += 1;
-        }
-      }
-    }
-
-    const tailText = Buffer.concat(chunks).toString('utf8');
-    const lines = tailText.trimEnd().split(/\r?\n/);
-    return lines.slice(-safeMaxLines).join('\n');
-  } finally {
-    await handle.close();
-  }
-}
-
 export async function collectLogs(input: AnalyzeLogsRequest): Promise<string> {
   if (input.source === 'journalctl' || input.source === 'journald') {
     return collectJournalctlLogs(input);
@@ -814,5 +782,5 @@ export async function collectLogs(input: AnalyzeLogsRequest): Promise<string> {
     return collectDockerLogs(input);
   }
 
-  return collectFileLogs(input);
+  throw buildError(400, `Unsupported source: ${input.source}`);
 }

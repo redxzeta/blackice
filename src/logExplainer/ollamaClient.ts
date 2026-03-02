@@ -1,8 +1,11 @@
-const defaultBaseUrl = process.env.OLLAMA_BASE_URL ?? 'http://192.168.1.230:11434';
-const defaultModel = process.env.OLLAMA_MODEL ?? 'qwen2.5:14b';
-const OLLAMA_TIMEOUT_MS = Number(process.env.OLLAMA_TIMEOUT_MS ?? 45_000);
-const OLLAMA_RETRY_ATTEMPTS = Number(process.env.OLLAMA_RETRY_ATTEMPTS ?? 2);
-const OLLAMA_RETRY_BACKOFF_MS = Number(process.env.OLLAMA_RETRY_BACKOFF_MS ?? 1_000);
+import { getRuntimeConfig } from '../config/runtimeConfig.js';
+
+const runtimeConfig = getRuntimeConfig();
+const defaultBaseUrl = runtimeConfig.ollama.baseUrl;
+const defaultModel = runtimeConfig.ollama.model;
+const OLLAMA_TIMEOUT_MS = Number(runtimeConfig.ollama.timeoutMs);
+const OLLAMA_RETRY_ATTEMPTS = Number(runtimeConfig.ollama.retryAttempts);
+const OLLAMA_RETRY_BACKOFF_MS = Number(runtimeConfig.ollama.retryBackoffMs);
 
 type OllamaGenerateResponse = {
   response?: string;
