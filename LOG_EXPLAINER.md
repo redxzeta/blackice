@@ -67,7 +67,8 @@ curl -sS http://127.0.0.1:3000/analyze/logs/batch \
     "contains": "request_id=...",
     "start": "2026-03-01T04:00:00Z",
     "end": "2026-03-01T04:15:00Z",
-    "limit": 2000
+    "limit": 2000,
+    "evidenceLines": 10
   }'
 ```
 
@@ -89,6 +90,7 @@ curl -sS http://127.0.0.1:3000/analyze/logs/batch \
 - Command output byte caps are enforced.
 - Loki guards: default 15-minute window, max window (default 60 minutes), max line cap, max response bytes, and scoped-label requirement (`host` or `unit`) unless `allowUnscoped: true`.
 - LLM output is policy-checked; unsafe command-like content is redacted with a safety note.
+- Batch responses can include bounded evidence excerpts via `evidenceLines` (max `50`); omitted by default.
 - No file writes, no delete operations, no remediation commands.
 - Ollama call has a request timeout.
 
