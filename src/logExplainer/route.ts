@@ -1,6 +1,7 @@
 import { type Request, type Response, type Express } from 'express';
 import { log } from '../log.js';
 import {
+  BATCH_EVIDENCE_LINES_DEFAULT,
   BATCH_EVIDENCE_LINES_MAX,
   AnalyzeLogsBatchRequestSchema,
   AnalyzeLogsBatchResponseSchema,
@@ -37,6 +38,7 @@ type AnalysisResult = {
   };
 };
 
+type BatchMode = 'analyze' | 'raw' | 'both';
 type EvidenceLine = {
   ts: string;
   line: string;
@@ -91,6 +93,25 @@ function buildEvidence(rawLogs: string, requestedLines: number | undefined): Evi
 
   const sampled = lines.slice(-boundedCount);
   return sampled.map((line) => parseEvidenceLine(line));
+}
+
+function resolveBatchMode(input: { mode?: BatchMode; analyze?: boolean; collectOnly?: boolean }): BatchMode {
+  if (input.mode) {
+    return input.mode;
+  }
+
+  if (input.collectOnly === true || input.analyze === false) {
+    return 'raw';
+  }
+
+  return 'analyze';
+}
+
+function resolveEvidenceLinesForMode(mode: BatchMode, requested: number | undefined): number | undefined {
+  if (mode === 'analyze') {
+    return undefined;
+  }
+  return requested ?? BATCH_EVIDENCE_LINES_DEFAULT;
 }
 
 async function analyzeOneRequest(request: AnalyzeLogsRequest): Promise<AnalysisResult> {
@@ -227,6 +248,7 @@ export function registerLogExplainerRoutes(app: Express): void {
             hours: 'number (optional)',
             sinceMinutes: 'number (optional; overrides hours for source=loki)',
             maxLines: 'number (optional)',
+            mode: 'analyze | raw | both (optional; default analyze)',
             evidenceLines: 'number (optional; max 50; includes evidence excerpts per success result)',
             concurrency: 'number (optional)'
           },
@@ -250,6 +272,11 @@ export function registerLogExplainerRoutes(app: Express): void {
       }
 
       const source = body.source;
+      const mode = resolveBatchMode({
+        mode: body.mode,
+        analyze: body.analyze,
+        collectOnly: body.collectOnly
+      });
 
       if (source === 'loki') {
         if (typeof body.query === 'string' && body.query.trim().length > 0) {
@@ -292,16 +319,30 @@ export function registerLogExplainerRoutes(app: Express): void {
         try {
           const collected = await collectLokiBatchLogs(lokiRequest);
           fallbackTarget = collected.query;
-          const evidence = buildEvidence(collected.logs, body.evidenceLines);
-          const shouldAnalyze = body.analyze !== false && body.collectOnly !== true;
+          const evidence = buildEvidence(collected.logs, resolveEvidenceLinesForMode(mode, body.evidenceLines));
 
-          if (!shouldAnalyze) {
+          if (mode === 'raw') {
             result = {
               target: collected.query,
               ok: true,
-              logs: collected.logs,
               evidence,
-              message: collected.logs.trim() ? 'Logs collected' : 'No logs collected (collect-only mode)'
+              message: collected.logs.trim() ? 'Logs collected (raw mode)' : 'No logs collected (raw mode)'
+            };
+          } else if (mode === 'both') {
+            const analysisRequest: AnalyzePromptRequest = {
+              source: 'loki',
+              target: collected.query,
+              hours: collected.hours,
+              maxLines: collected.limit,
+              analyze: body.analyze,
+              collectOnly: body.collectOnly
+            };
+            const analysisResult = await analyzeFromRawLogs(analysisRequest, collected.logs);
+            result = {
+              target: collected.query,
+              ok: true,
+              evidence,
+              ...analysisResult
             };
           } else {
             const analysisRequest: AnalyzePromptRequest = {
@@ -316,7 +357,6 @@ export function registerLogExplainerRoutes(app: Express): void {
             result = {
               target: collected.query,
               ok: true,
-              evidence,
               ...analysisResult
             };
           }
@@ -372,17 +412,14 @@ export function registerLogExplainerRoutes(app: Express): void {
 
         try {
           const rawLogs = await collectLogs(collectorRequest);
-          const evidence = buildEvidence(rawLogs, body.evidenceLines);
+          const evidence = buildEvidence(rawLogs, resolveEvidenceLinesForMode(mode, body.evidenceLines));
 
-          const shouldAnalyze = analysisRequest.analyze !== false && analysisRequest.collectOnly !== true;
-
-          if (!shouldAnalyze) {
+          if (mode === 'raw') {
             return {
               target,
               ok: true,
-              logs: rawLogs,
               evidence,
-              message: rawLogs.trim() ? 'Logs collected' : 'No logs collected (collect-only mode)'
+              message: rawLogs.trim() ? 'Logs collected (raw mode)' : 'No logs collected (raw mode)'
             };
           }
 
@@ -393,15 +430,23 @@ export function registerLogExplainerRoutes(app: Express): void {
               target,
               ok: true,
               no_logs: true,
-              evidence,
+              ...(mode === 'both' ? { evidence } : {}),
               message: analysisResult.message
             };
+          }
+
+          if (mode === 'both') {
+            return {
+              target,
+              ok: true,
+              evidence,
+              ...analysisResult
+            } as AnalyzeLogsBatchResultOk;
           }
 
           return {
             target,
             ok: true,
-            evidence,
             ...analysisResult
           } as AnalyzeLogsBatchResultOk;
         } catch (error: unknown) {

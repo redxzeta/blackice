@@ -6,6 +6,7 @@ export const ANALYZE_MAX_LINES_REQUEST = 5000;
 export const BATCH_CONCURRENCY_MIN = 1;
 export const LOKI_MAX_LIMIT_REQUEST = 5000;
 export const BATCH_EVIDENCE_LINES_MAX = 50;
+export const BATCH_EVIDENCE_LINES_DEFAULT = 10;
 const CONFIG_MAX_CONCURRENCY = Number(getRuntimeConfig().limits.maxConcurrency);
 export const BATCH_CONCURRENCY_MAX = Number.isFinite(CONFIG_MAX_CONCURRENCY) && CONFIG_MAX_CONCURRENCY >= BATCH_CONCURRENCY_MIN
   ? Math.floor(CONFIG_MAX_CONCURRENCY)
@@ -51,6 +52,7 @@ export const AnalyzeLogsBatchRequestSchema = z
     hours: z.number().positive().max(ANALYZE_MAX_HOURS).optional().default(6),
     sinceMinutes: z.number().int().positive().max(ANALYZE_MAX_HOURS * 60).optional(),
     maxLines: z.number().int().positive().max(ANALYZE_MAX_LINES_REQUEST).optional().default(300),
+    mode: z.enum(['analyze', 'raw', 'both']).optional(),
     evidenceLines: z.number().int().positive().max(BATCH_EVIDENCE_LINES_MAX).optional(),
     concurrency: z.number().int().min(BATCH_CONCURRENCY_MIN).max(BATCH_CONCURRENCY_MAX).optional().default(BATCH_CONCURRENCY_DEFAULT),
     analyze: z.boolean().optional().default(true),

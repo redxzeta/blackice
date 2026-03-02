@@ -64,6 +64,7 @@ curl -sS http://127.0.0.1:3000/analyze/logs/batch \
       "host": "owonto",
       "unit": "blackice-router.service"
     },
+    "mode": "both",
     "contains": "request_id=...",
     "regex": "status=(5..|4..)",
     "sinceSeconds": 900,
@@ -90,7 +91,8 @@ curl -sS http://127.0.0.1:3000/analyze/logs/batch \
 - Command output byte caps are enforced.
 - Loki guards: default 15-minute window, max window (default 60 minutes), max line cap, max response bytes, and scoped-label requirement (`host` or `unit`) unless `allowUnscoped: true`.
 - LLM output is policy-checked; unsafe command-like content is redacted with a safety note.
-- Batch responses can include bounded evidence excerpts via `evidenceLines` (max `50`); omitted by default.
+- Batch `mode` supports `analyze` (analysis only), `raw` (evidence only, no model call), and `both` (analysis + evidence).
+- Evidence excerpts are bounded via `evidenceLines` (max `50`; default `10` for `raw`/`both`).
 - No file writes, no delete operations, no remediation commands.
 - Ollama call has a request timeout.
 
