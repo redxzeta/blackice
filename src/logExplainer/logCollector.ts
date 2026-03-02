@@ -41,6 +41,16 @@ type LokiRulesConfig = {
   unitsRegex: RegExp | null;
 };
 
+export type LokiDiscoveryMetadata = {
+  job?: string;
+  allowedLabels: string[];
+  hosts: string[];
+  units: string[];
+  hasHostsRegex: boolean;
+  hasUnitsRegex: boolean;
+  requireScopeLabels: boolean;
+};
+
 let cachedLokiRules: LokiRulesConfig | null = null;
 
 function buildError(status: number, message: string): Error & { status: number } {
@@ -366,8 +376,33 @@ export function ensureLokiRulesConfigured(): void {
 
 export function getLokiSyntheticTargets(): string[] {
   // Loki selector strings are intentionally not accepted by /analyze/logs/batch.
-  // Keep targets empty until structured discovery metadata is added.
   return [];
+}
+
+export function getLokiDiscoveryMetadata(): LokiDiscoveryMetadata {
+  ensureLokiRulesConfigured();
+
+  if (!isLokiEnabled()) {
+    return {
+      allowedLabels: [],
+      hosts: [],
+      units: [],
+      hasHostsRegex: false,
+      hasUnitsRegex: false,
+      requireScopeLabels: false
+    };
+  }
+
+  const rules = loadLokiRulesConfig();
+  return {
+    job: rules.job,
+    allowedLabels: [...rules.allowedLabels].sort(),
+    hosts: [...rules.hosts].sort(),
+    units: [...rules.units].sort(),
+    hasHostsRegex: rules.hostsRegex !== null,
+    hasUnitsRegex: rules.unitsRegex !== null,
+    requireScopeLabels: LOKI_REQUIRE_SCOPE_LABELS
+  };
 }
 
 export function validateAllowedLokiSelector(selector: string): string {
