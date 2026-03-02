@@ -248,6 +248,7 @@ curl -sS http://127.0.0.1:3000/analyze/logs/batch \
   -d '{
     "source": "loki",
     "filters": {"job":"journald","host":"owonto","unit":"blackice-router.service"},
+    "mode": "both",
     "contains": "request_id=",
     "regex": "status=(5..|4..)",
     "sinceSeconds": 900,

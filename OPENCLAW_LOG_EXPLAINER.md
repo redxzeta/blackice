@@ -67,6 +67,7 @@ Example Loki batch request (structured filters):
     "unit": "blackice-router.service",
     "job": "journald"
   },
+  "mode": "both",
   "contains": "request_id=...",
   "regex": "status=(5..|4..)",
   "sinceSeconds": 900,
@@ -108,7 +109,8 @@ Example batch response shape:
 - For `source: "loki"`, use `sinceSeconds` for relative windows; do not combine with `start`/`end`.
 - For `source: "loki"`, max time window is controlled by `LOKI_MAX_WINDOW_MINUTES` (default 60).
 - For `source: "loki"`, optional `regex` adds a LogQL regex pipeline filter (`|~`).
-- Set `evidenceLines` (max `50`) to include bounded, redacted raw evidence lines in successful batch results.
+- `mode` options: `analyze` (analysis only), `raw` (evidence only, no model invocation), `both` (analysis + evidence).
+- `evidenceLines` max is `50`; default `10` when `mode` is `raw` or `both`.
 - The service enforces read-only safety; unsafe command-like output is redacted before response.
 - This endpoint is separate from `/v1/chat/completions`; call it as a direct HTTP integration.
 
