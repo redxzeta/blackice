@@ -70,7 +70,8 @@ Example Loki batch request (structured filters):
   "contains": "request_id=...",
   "start": "2026-03-01T04:00:00Z",
   "end": "2026-03-01T04:15:00Z",
-  "limit": 2000
+  "limit": 2000,
+  "evidenceLines": 10
 }
 ```
 
@@ -86,7 +87,13 @@ Example batch response shape:
     {
       "target": "{host=\"owonto\",job=\"journald\",unit=\"blackice-router.service\"} |= \"request_id=...\"",
       "ok": true,
-      "analysis": "## Summary\n..."
+      "analysis": "## Summary\n...",
+      "evidence": [
+        {
+          "ts": "2026-03-01T04:12:53Z",
+          "line": "request_id=... upstream status=502"
+        }
+      ]
     }
   ]
 }
@@ -99,6 +106,7 @@ Example batch response shape:
 - For `source: "loki"`, allowlist rules are loaded from `LOKI_RULES_FILE` YAML.
 - For `source: "loki"`, default time window is last 15 minutes if `start`/`end` are omitted.
 - For `source: "loki"`, max time window is controlled by `LOKI_MAX_WINDOW_MINUTES` (default 60).
+- Set `evidenceLines` (max `50`) to include bounded, redacted raw evidence lines in successful batch results.
 - The service enforces read-only safety; unsafe command-like output is redacted before response.
 - This endpoint is separate from `/v1/chat/completions`; call it as a direct HTTP integration.
 

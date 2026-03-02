@@ -22,6 +22,12 @@ const FORBIDDEN_PATTERNS: RegExp[] = [
   /\bufw\s+(?:enable|disable|reset|allow|deny|reject|limit|delete|reload)\b/i
 ];
 
+const EVIDENCE_REDACTION_RULES: Array<{ pattern: RegExp; replacement: string }> = [
+  { pattern: /\b(Bearer)\s+[A-Za-z0-9._~+/=-]+/gi, replacement: '$1 [REDACTED]' },
+  { pattern: /(\b(?:authorization|x-api-key)\b\s*:\s*)(\S+)/gi, replacement: '$1[REDACTED]' },
+  { pattern: /(\b(?:api[_-]?key|token|password|passwd|secret)\b\s*[=:]\s*)(\S+)/gi, replacement: '$1[REDACTED]' }
+];
+
 export function ensureReadOnlyAnalysisOutput(analysis: string): { safe: true } | { safe: false; reason: string } {
   for (const pattern of FORBIDDEN_PATTERNS) {
     if (pattern.test(analysis)) {
@@ -92,4 +98,12 @@ export function sanitizeReadOnlyAnalysisOutput(analysis: string): {
     redacted: true,
     reasons: Array.from(reasons)
   };
+}
+
+export function sanitizeReadOnlyEvidenceLine(line: string): string {
+  let sanitized = line;
+  for (const rule of EVIDENCE_REDACTION_RULES) {
+    sanitized = sanitized.replace(rule.pattern, rule.replacement);
+  }
+  return sanitized;
 }
