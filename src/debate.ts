@@ -1,5 +1,6 @@
 import { runWorkerText } from './ollama.js';
 import type { DebateRequest } from './schema.js';
+import { isCodexModel } from './ai/modelPolicy.js';
 
 type DebateSpeaker = 'A' | 'B';
 
@@ -60,6 +61,10 @@ function getModelAllowlist(): string[] {
 function assertModelAllowed(model: string, allowlist: string[]): void {
   if (!allowlist.includes(model)) {
     throw new DebateInputError(`Model not allowed for debate: ${model}`);
+  }
+
+  if (isCodexModel(model)) {
+    throw new DebateInputError(`Codex models are restricted to code generation routes: ${model}`);
   }
 }
 
