@@ -27,6 +27,7 @@ import { errMessage, toHttpError } from '../http/errors.js';
 import { getRequestId } from '../http/requestLogging.js';
 import { parseBodyOrRespond } from '../http/validation.js';
 import { buildLogExplainerStatus } from './status.js';
+import { resolveSafetyIdentifier } from '../ai/safetyIdentifier.js';
 
 type AnalysisResult = {
   analysis: string;
@@ -126,7 +127,12 @@ function resolveEvidenceLinesForMode(mode: BatchMode, requested: number | undefi
   return requested ?? BATCH_EVIDENCE_LINES_DEFAULT;
 }
 
-async function analyzeOneRequest(request: AnalyzeLogsRequest): Promise<AnalysisResult> {
+type AnalysisContext = {
+  requestId?: string;
+  safetyIdentifier?: string;
+};
+
+async function analyzeOneRequest(request: AnalyzeLogsRequest, ctx: AnalysisContext): Promise<AnalysisResult> {
   const rawLogs = await collectLogs(request);
 
   const shouldAnalyze = request.analyze !== false && request.collectOnly !== true;
@@ -135,10 +141,14 @@ async function analyzeOneRequest(request: AnalyzeLogsRequest): Promise<AnalysisR
     return { analysis: rawLogs };
   }
 
-  return analyzeFromRawLogs(request, rawLogs);
+  return analyzeFromRawLogs(request, rawLogs, ctx);
 }
 
-async function analyzeFromRawLogs(request: AnalyzePromptRequest, rawLogs: string): Promise<AnalysisResult> {
+async function analyzeFromRawLogs(
+  request: AnalyzePromptRequest,
+  rawLogs: string,
+  ctx: AnalysisContext
+): Promise<AnalysisResult> {
   if (!rawLogs.trim()) {
     return {
       analysis: '',
@@ -151,7 +161,9 @@ async function analyzeFromRawLogs(request: AnalyzePromptRequest, rawLogs: string
   const userPrompt = buildUserPrompt({ ...request, logs, truncated });
   const analysis = await analyzeLogsWithOllama({
     systemPrompt: SYSTEM_PROMPT,
-    userPrompt
+    userPrompt,
+    requestId: ctx.requestId,
+    safetyIdentifier: ctx.safetyIdentifier
   });
 
   const safety = ensureReadOnlyAnalysisOutput(analysis);
@@ -278,6 +290,12 @@ export function registerLogExplainerRoutes(app: Express): void {
 
   app.post('/analyze/logs/batch', async (req: Request, res: Response) => {
     try {
+      const requestId = getRequestId(res);
+      const safetyIdentifier = resolveSafetyIdentifier({
+        request: req,
+        explicitUser: undefined,
+        requestId
+      });
       const body = parseBodyOrRespond(AnalyzeLogsBatchRequestSchema, req.body, res);
       if (!body) {
         return;
@@ -351,7 +369,10 @@ export function registerLogExplainerRoutes(app: Express): void {
               analyze: body.analyze,
               collectOnly: body.collectOnly
             };
-            const analysisResult = await analyzeFromRawLogs(analysisRequest, collected.logs);
+            const analysisResult = await analyzeFromRawLogs(analysisRequest, collected.logs, {
+              requestId,
+              safetyIdentifier
+            });
             result = {
               target: collected.query,
               ok: true,
@@ -367,7 +388,10 @@ export function registerLogExplainerRoutes(app: Express): void {
               analyze: body.analyze,
               collectOnly: body.collectOnly
             };
-            const analysisResult = await analyzeFromRawLogs(analysisRequest, collected.logs);
+            const analysisResult = await analyzeFromRawLogs(analysisRequest, collected.logs, {
+              requestId,
+              safetyIdentifier
+            });
             result = {
               target: collected.query,
               ok: true,
@@ -438,7 +462,10 @@ export function registerLogExplainerRoutes(app: Express): void {
             };
           }
 
-          const analysisResult = await analyzeFromRawLogs(analysisRequest, rawLogs);
+          const analysisResult = await analyzeFromRawLogs(analysisRequest, rawLogs, {
+            requestId,
+            safetyIdentifier
+          });
 
           if ('no_logs' in analysisResult && analysisResult.no_logs) {
             return {
@@ -501,12 +528,21 @@ export function registerLogExplainerRoutes(app: Express): void {
 
   app.post('/analyze/logs', async (req: Request, res: Response) => {
     try {
+      const requestId = getRequestId(res);
+      const safetyIdentifier = resolveSafetyIdentifier({
+        request: req,
+        explicitUser: undefined,
+        requestId
+      });
       const body = parseBodyOrRespond(AnalyzeLogsRequestSchema, req.body, res);
       if (!body) {
         return;
       }
 
-      const analyzed = await analyzeOneRequest(body);
+      const analyzed = await analyzeOneRequest(body, {
+        requestId,
+        safetyIdentifier
+      });
       res.status(200).json(AnalyzeLogsResponseSchema.parse(analyzed));
     } catch (error: unknown) {
       const httpError = toHttpError(error);

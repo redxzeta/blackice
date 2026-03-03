@@ -4,6 +4,7 @@ import { log } from '../log.js';
 import { DebateRequestSchema } from '../schema.js';
 import { sendOpenAIError } from '../http/errors.js';
 import { getRequestId } from '../http/requestLogging.js';
+import { resolveSafetyIdentifier } from '../ai/safetyIdentifier.js';
 
 export function registerDebateRoutes(app: Express, maxActiveDebates: number): void {
   let activeDebates = 0;
@@ -32,7 +33,16 @@ export function registerDebateRoutes(app: Express, maxActiveDebates: number): vo
 
       activeDebates += 1;
       acquiredDebateSlot = true;
-      const result = await runDebate(parsed.data);
+      const safetyIdentifier = resolveSafetyIdentifier({
+        request: req,
+        explicitUser: parsed.data.user,
+        requestId
+      });
+
+      const result = await runDebate(parsed.data, {
+        requestId,
+        safetyIdentifier
+      });
 
       log.info('debate_complete', {
         request_id: requestId,
@@ -82,6 +92,7 @@ export function registerDebateRoutes(app: Express, maxActiveDebates: number): vo
       required: ['topic', 'modelA', 'modelB'],
       properties: {
         topic: { type: 'string', minLength: 3, maxLength: 500 },
+        user: { type: 'string', maxLength: 128 },
         moderatorInstruction: { type: 'string', minLength: 1, maxLength: 1000 },
         moderator_decision_mode: {
           type: 'string',

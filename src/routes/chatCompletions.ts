@@ -9,6 +9,7 @@ import { getRequestId } from '../http/requestLogging.js';
 import { buildMessageResponse } from '../chat/responseBuilders.js';
 import { resolveRoute } from '../chat/routeResolution.js';
 import { handleChatStreaming } from '../chat/streaming.js';
+import { resolveSafetyIdentifier } from '../ai/safetyIdentifier.js';
 
 export function registerChatCompletionsRoute(app: Express): void {
   app.post('/v1/chat/completions', async (req: Request, res: Response) => {
@@ -24,9 +25,17 @@ export function registerChatCompletionsRoute(app: Express): void {
 
       const body = parsed.data;
       const resolved = resolveRoute(body);
+      const safetyIdentifier = resolveSafetyIdentifier({
+        request: req,
+        explicitUser: body.user,
+        requestId
+      });
 
       if (resolved.route.kind === 'action' && resolved.envelope.kind === 'action') {
-        const actionResult = await executeAction(resolved.envelope.action);
+        const actionResult = await executeAction(resolved.envelope.action, {
+          requestId,
+          safetyIdentifier
+        });
 
         log.info('request_complete', {
           request_id: requestId,
@@ -52,7 +61,8 @@ export function registerChatCompletionsRoute(app: Express): void {
           resolved.envelope.raw,
           body.temperature,
           body.max_tokens,
-          requestId
+          requestId,
+          safetyIdentifier
         );
 
         log.info('request_complete', {
@@ -70,7 +80,9 @@ export function registerChatCompletionsRoute(app: Express): void {
         input: resolved.envelope.raw,
         temperature: body.temperature,
         maxTokens: body.max_tokens,
-        requestId
+        requestId,
+        safetyIdentifier,
+        routeKind: 'chat'
       });
 
       const sanitized = sanitizeLLMOutput(result.text);

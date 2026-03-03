@@ -42,6 +42,7 @@ export const OpenAIErrorSchema = z.object({
 
 export const DebateRequestSchema = z.object({
   topic: z.string().min(3).max(500),
+  user: z.string().max(128).optional(),
   moderatorInstruction: z.string().min(1).max(1000).optional(),
   moderator_decision_mode: z.literal('openclaw_decides').optional().default('openclaw_decides'),
   modelA: z.string().min(1).max(120),

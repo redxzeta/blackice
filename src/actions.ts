@@ -21,6 +21,11 @@ type ActionResult = {
   action: string;
 };
 
+type ActionExecutionMetadata = {
+  requestId?: string;
+  safetyIdentifier?: string;
+};
+
 async function runSafeCmd(file: string, args: string[]): Promise<string> {
   const { stdout } = await execFileAsync(file, args, {
     timeout: COMMAND_TIMEOUT_MS,
@@ -30,7 +35,7 @@ async function runSafeCmd(file: string, args: string[]): Promise<string> {
   return stdout.trim();
 }
 
-async function runSummaryAction(action: ActionEnvelope): Promise<string> {
+async function runSummaryAction(action: ActionEnvelope, metadata: ActionExecutionMetadata): Promise<string> {
   const route = chooseActionModel(action.action);
   const directive =
     action.action === 'summarize'
@@ -42,7 +47,10 @@ async function runSummaryAction(action: ActionEnvelope): Promise<string> {
   const prompt = `${directive}\n\nOptions: ${JSON.stringify(action.options)}\n\nInput:\n${action.input}`;
   const result = await runWorkerText({
     modelId: route.model,
-    input: prompt
+    input: prompt,
+    requestId: metadata.requestId,
+    safetyIdentifier: metadata.safetyIdentifier,
+    routeKind: 'action'
   });
 
   return result.text;
@@ -137,7 +145,10 @@ async function tailLog(options: Record<string, unknown>): Promise<string> {
   return `tail_log(${file}, lines=${lines}):\n${output}`;
 }
 
-export async function executeAction(actionEnvelope: ActionEnvelope): Promise<ActionResult> {
+export async function executeAction(
+  actionEnvelope: ActionEnvelope,
+  metadata: ActionExecutionMetadata = {}
+): Promise<ActionResult> {
   if (!ACTIONS_ENABLED) {
     throw new Error('Actions are disabled by ACTIONS_ENABLED=false.');
   }
@@ -148,7 +159,7 @@ export async function executeAction(actionEnvelope: ActionEnvelope): Promise<Act
     case 'transform':
       return {
         action: actionEnvelope.action,
-        text: await runSummaryAction(actionEnvelope)
+        text: await runSummaryAction(actionEnvelope, metadata)
       };
     case 'healthcheck':
       return {
