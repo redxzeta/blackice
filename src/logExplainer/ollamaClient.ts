@@ -1,5 +1,6 @@
 import { getRuntimeConfig } from '../config/runtimeConfig.js';
 import { getObservabilityModel, getPolicyFallbackModel } from '../ai/modelPolicy.js';
+import { parsePolicySignal } from '../ai/policySignal.js';
 import { log } from '../log.js';
 
 const runtimeConfig = getRuntimeConfig();
@@ -86,11 +87,6 @@ async function requestOllamaOnce(params: {
   }
 }
 
-function isCyberPolicyViolationError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /cyber_policy_violation/i.test(message);
-}
-
 export async function analyzeLogsWithOllama(params: {
   systemPrompt: string;
   userPrompt: string;
@@ -111,7 +107,8 @@ export async function analyzeLogsWithOllama(params: {
       });
     } catch (error: unknown) {
       lastError = error;
-      if (isCyberPolicyViolationError(error)) {
+      const signal = parsePolicySignal(error);
+      if (signal.isCyberPolicyViolation) {
         const fallbackModel = getPolicyFallbackModel(defaultModel);
         const attemptedFallback = fallbackModel !== defaultModel;
 
@@ -119,6 +116,8 @@ export async function analyzeLogsWithOllama(params: {
           request_id: params.requestId ?? null,
           route_kind: 'observability',
           trigger: 'cyber_policy_violation',
+          error_code: signal.errorCode ?? 'cyber_policy_violation',
+          param: signal.param ?? null,
           primary_model: defaultModel,
           fallback_model: attemptedFallback ? fallbackModel : null,
           safety_identifier_present: Boolean(params.safetyIdentifier),

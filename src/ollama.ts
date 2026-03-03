@@ -3,6 +3,7 @@ import { createOllama } from 'ollama-ai-provider-v2';
 import { buildWorkerContractPrompt, sanitizeLLMOutput } from './sanitize.js';
 import { getRuntimeConfig } from './config/runtimeConfig.js';
 import { getPolicyFallbackModel } from './ai/modelPolicy.js';
+import { parsePolicySignal } from './ai/policySignal.js';
 import { log } from './log.js';
 
 function normalizeOllamaBaseURL(input: string): string {
@@ -47,25 +48,6 @@ export type GenerateParams = {
   safetyIdentifier?: string;
   routeKind?: 'chat' | 'action' | 'debate' | 'observability';
 };
-
-type PolicySignal = {
-  isCyberPolicyViolation: boolean;
-  param?: string;
-  errorCode?: string;
-};
-
-function parsePolicySignal(error: unknown): PolicySignal {
-  const message = error instanceof Error ? error.message : String(error);
-  const isCyberPolicyViolation = /cyber_policy_violation/i.test(message);
-  const paramMatch = message.match(/["']?param["']?\s*[:=]\s*["']?([a-zA-Z0-9_:-]+)["']?/i);
-  const codeMatch = message.match(/["']?error_code["']?\s*[:=]\s*["']?([a-zA-Z0-9_:-]+)["']?/i);
-
-  return {
-    isCyberPolicyViolation,
-    param: paramMatch?.[1],
-    errorCode: codeMatch?.[1]
-  };
-}
 
 async function generateWithModel(params: {
   modelId: string;

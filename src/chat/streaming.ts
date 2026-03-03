@@ -2,6 +2,7 @@ import type { Response } from 'express';
 import { runWorkerTextStream } from '../ollama.js';
 import { nowSeconds, openAICompletionId } from './responseBuilders.js';
 import { getPolicyFallbackModel } from '../ai/modelPolicy.js';
+import { parsePolicySignal } from '../ai/policySignal.js';
 import { log } from '../log.js';
 
 type StreamDeltaEvent = {
@@ -22,11 +23,6 @@ function isTextDeltaEvent(part: unknown): part is StreamDeltaEvent {
   );
 }
 
-function isCyberPolicyViolationError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /cyber_policy_violation/i.test(message);
-}
-
 export async function handleChatStreaming(
   res: Response,
   modelId: string,
@@ -38,6 +34,9 @@ export async function handleChatStreaming(
 ): Promise<void> {
   const id = openAICompletionId();
   const created = nowSeconds();
+  let responseModel = modelId;
+  let emittedAnyContent = false;
+  let roleSent = false;
 
   res.status(200);
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
@@ -46,19 +45,25 @@ export async function handleChatStreaming(
   res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders();
 
-  sendSSEChunk(res, {
-    id,
-    object: 'chat.completion.chunk',
-    created,
-    model: modelId,
-    choices: [
-      {
-        index: 0,
-        delta: { role: 'assistant' },
-        finish_reason: null
-      }
-    ]
-  });
+  const sendRoleChunk = (): void => {
+    if (roleSent) {
+      return;
+    }
+    roleSent = true;
+    sendSSEChunk(res, {
+      id,
+      object: 'chat.completion.chunk',
+      created,
+      model: responseModel,
+      choices: [
+        {
+          index: 0,
+          delta: { role: 'assistant' },
+          finish_reason: null
+        }
+      ]
+    });
+  };
 
   const suppressionEnabled = process.env.STREAM_SUPPRESS_TOOLISH === '1';
   const pipeModelStream = async (activeModel: string): Promise<void> => {
@@ -96,11 +101,12 @@ export async function handleChatStreaming(
         if (trimmed.length > 220 || preBuffer.includes('\n') || !trimmed.startsWith('{')) {
           gating = false;
           if (preBuffer) {
+            sendRoleChunk();
             sendSSEChunk(res, {
               id,
               object: 'chat.completion.chunk',
               created,
-              model: activeModel,
+              model: responseModel,
               choices: [
                 {
                   index: 0,
@@ -109,6 +115,7 @@ export async function handleChatStreaming(
                 }
               ]
             });
+            emittedAnyContent = true;
           }
           preBuffer = '';
           continue;
@@ -123,11 +130,12 @@ export async function handleChatStreaming(
           if (looksToolCall) {
             gating = false;
             preBuffer = '';
+            sendRoleChunk();
             sendSSEChunk(res, {
               id,
               object: 'chat.completion.chunk',
               created,
-              model: activeModel,
+              model: responseModel,
               choices: [
                 {
                   index: 0,
@@ -138,6 +146,7 @@ export async function handleChatStreaming(
                 }
               ]
             });
+            emittedAnyContent = true;
           }
         } catch {
           // Wait for additional tokens while gating.
@@ -146,11 +155,12 @@ export async function handleChatStreaming(
         continue;
       }
 
+      sendRoleChunk();
       sendSSEChunk(res, {
         id,
         object: 'chat.completion.chunk',
         created,
-        model: activeModel,
+        model: responseModel,
         choices: [
           {
             index: 0,
@@ -159,13 +169,20 @@ export async function handleChatStreaming(
           }
         ]
       });
+      emittedAnyContent = true;
     }
   };
 
   try {
     await pipeModelStream(modelId);
   } catch (error: unknown) {
-    if (!isCyberPolicyViolationError(error)) {
+    const signal = parsePolicySignal(error);
+    if (!signal.isCyberPolicyViolation) {
+      throw error;
+    }
+
+    // Avoid mixing partial output from two different model executions in one stream.
+    if (emittedAnyContent) {
       throw error;
     }
 
@@ -173,11 +190,14 @@ export async function handleChatStreaming(
     if (fallbackModel === modelId) {
       throw error;
     }
+    responseModel = fallbackModel;
 
     log.info('policy_trigger_event', {
       request_id: requestId ?? null,
       route_kind: 'chat',
       trigger: 'cyber_policy_violation',
+      error_code: signal.errorCode ?? 'cyber_policy_violation',
+      param: signal.param ?? null,
       primary_model: modelId,
       fallback_model: fallbackModel,
       safety_identifier_present: Boolean(safetyIdentifier),
@@ -210,11 +230,12 @@ export async function handleChatStreaming(
     }
   }
 
+  sendRoleChunk();
   sendSSEChunk(res, {
     id,
     object: 'chat.completion.chunk',
     created,
-    model: modelId,
+    model: responseModel,
     choices: [
       {
         index: 0,
