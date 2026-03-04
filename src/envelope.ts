@@ -1,4 +1,5 @@
-import { ActionEnvelopeSchema, ChatMessage } from './schema.js'
+import { ActionEnvelopeSchema } from './schema.js'
+import type { ChatMessage } from './schema.js'
 
 export type ParsedEnvelope =
   | { kind: 'action'; raw: string; action: ReturnType<typeof ActionEnvelopeSchema.parse> }
