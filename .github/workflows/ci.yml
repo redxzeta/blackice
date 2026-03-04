@@ -26,6 +26,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Biome lint
+        run: pnpm run lint
+
       - name: Biome format check
         run: pnpm run format:check
 
