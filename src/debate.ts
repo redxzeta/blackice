@@ -1,6 +1,6 @@
+import { isCodexModel } from './ai/modelPolicy.js'
 import { runWorkerText } from './ollama.js'
 import type { DebateRequest } from './schema.js'
-import { isCodexModel } from './ai/modelPolicy.js'
 
 type DebateSpeaker = 'A' | 'B'
 
@@ -116,11 +116,11 @@ function buildTurnPrompt(args: {
     `You are debater ${args.speaker}. Opponent is ${args.opponent}.`,
     `Current Round: ${args.round}`,
     `Current Turn: ${args.turn}`,
-    `Debate Rules:`,
+    'Debate Rules:',
     `- Make one concise argument and one direct response to the opponent's strongest point.`,
-    `- Be persuasive but factual.`,
+    '- Be persuasive but factual.',
     `- Keep output under ${args.maxTurnChars} characters.`,
-    `- Plain English text only.`,
+    '- Plain English text only.',
     '',
     'Prior Transcript:',
     history || '(none)',
