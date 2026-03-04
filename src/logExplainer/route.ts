@@ -544,7 +544,7 @@ export function registerLogExplainerRoutes(app: Express): void {
               ...(modeInfo.legacyCollectOnly ? { logs: collected.logs } : {}),
               ...(hasLogs ? {} : { no_logs: true }),
               evidence,
-              message: hasLogs ? 'Logs collected (raw mode)' : 'No logs found'
+              message: hasLogs ? 'Logs collected (raw mode)' : 'No logs collected (raw mode)'
             };
           } else if (mode === 'both') {
             const analysisRequest: AnalyzePromptRequest = {
@@ -649,7 +649,7 @@ export function registerLogExplainerRoutes(app: Express): void {
               ...(modeInfo.legacyCollectOnly ? { logs: rawLogs } : {}),
               ...(hasLogs ? {} : { no_logs: true }),
               evidence,
-              message: hasLogs ? 'Logs collected (raw mode)' : 'No logs found'
+              message: hasLogs ? 'Logs collected (raw mode)' : 'No logs collected (raw mode)'
             };
           }
 
