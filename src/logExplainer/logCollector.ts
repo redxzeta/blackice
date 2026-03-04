@@ -732,7 +732,7 @@ export async function queryLokiRange(input: {
     let truncated = false
 
     for (const entry of selected) {
-      const lineBytes = Buffer.byteLength(entry.line + '\n', 'utf8')
+      const lineBytes = Buffer.byteLength(`${entry.line}\n`, 'utf8')
       if (bytesUsed + lineBytes > maxBytes) {
         truncated = true
         break
