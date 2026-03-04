@@ -1,4 +1,4 @@
-import { type Request, type Response, type Express } from 'express'
+import type { Request, Response, Express } from 'express'
 import { log } from '../log.js'
 import {
   BATCH_EVIDENCE_LINES_DEFAULT,

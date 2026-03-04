@@ -124,7 +124,6 @@ async function pathIsAllowlisted(requestedPath: string): Promise<boolean> {
         return true
       }
     } catch {
-      continue
     }
   }
 
