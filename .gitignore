@@ -26,3 +26,6 @@ npm-shrinkwrap.json
 
 # coverage
 coverage/
+output/
+tmp/
+.codex-worktrees/
