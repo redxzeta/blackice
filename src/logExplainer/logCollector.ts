@@ -207,7 +207,7 @@ function matchesAllowlist(value: string, list: Set<string>, regex: RegExp | null
   if (list.size > 0 && list.has(value)) {
     return true
   }
-  if (regex && regex.test(value)) {
+  if (regex?.test(value)) {
     return true
   }
   return false
@@ -717,9 +717,7 @@ export async function queryLokiRange(input: {
             ? `${tsIso} [${labelPrefix}] ${lineRaw}`
             : `${tsIso} ${lineRaw}`
           flattened.push({ ts: tsNs, line: merged })
-        } catch {
-          continue
-        }
+        } catch {}
       }
     }
 
@@ -732,7 +730,7 @@ export async function queryLokiRange(input: {
     let truncated = false
 
     for (const entry of selected) {
-      const lineBytes = Buffer.byteLength(entry.line + '\n', 'utf8')
+      const lineBytes = Buffer.byteLength(`${entry.line}\n`, 'utf8')
       if (bytesUsed + lineBytes > maxBytes) {
         truncated = true
         break
