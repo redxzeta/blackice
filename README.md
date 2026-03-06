@@ -323,12 +323,12 @@ curl -sS "http://127.0.0.1:3000/version"
 ```bash
 pnpm run version:patch
 # or: pnpm run version:minor
-# or: npm run version:major
+# or: pnpm run version:major
 git push origin main --follow-tags
 ```
 - Change tags for non-release checkpoints (tag current commit only):
 ```bash
-npm run tag:change
+pnpm run tag:change
 git push origin main --tags
 ```
 
