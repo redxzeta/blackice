@@ -1,9 +1,10 @@
+import { env } from './config/env.js'
 import { ollamaBaseURL } from './ollama.js'
 import { log } from './log.js'
 import { createApp } from './app.js'
 
-const port = Number(process.env.PORT ?? 3000)
-const maxActiveDebates = Number(process.env.DEBATE_MAX_CONCURRENT ?? 1)
+const port = env.PORT
+const maxActiveDebates = env.DEBATE_MAX_CONCURRENT
 
 const app = createApp(maxActiveDebates)
 

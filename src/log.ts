@@ -1,3 +1,5 @@
+import { env } from './config/env.js'
+
 type LogLevel = 'debug' | 'info'
 type LogLevelWithError = LogLevel | 'error'
 
@@ -8,8 +10,8 @@ type LogEntry = {
   fields: Record<string, unknown>
 }
 
-const level: LogLevel = process.env.LOG_LEVEL === 'debug' ? 'debug' : 'info'
-const maxLogBufferEntries = Number(process.env.LOG_BUFFER_MAX_ENTRIES ?? 2000)
+const level: LogLevel = env.LOG_LEVEL
+const maxLogBufferEntries = env.LOG_BUFFER_MAX_ENTRIES
 const logBuffer: LogEntry[] = []
 
 function shouldLog(msgLevel: LogLevel): boolean {

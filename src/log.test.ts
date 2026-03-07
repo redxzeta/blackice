@@ -11,21 +11,21 @@ afterEach(() => {
 
 describe('log.ts', () => {
   it('stores logs in buffer and trims to configured max size', async () => {
-    vi.stubEnv('LOG_BUFFER_MAX_ENTRIES', '2')
+    vi.stubEnv('LOG_BUFFER_MAX_ENTRIES', '100')
     const { log, getRecentLogs } = await import('./log.js')
 
-    log.info('first', { a: 1 })
-    log.info('second', { a: 2 })
-    log.info('third', { a: 3 })
+    for (let i = 0; i < 101; i++) {
+      log.info(`msg_${i}`, { i })
+    }
 
-    const recent = getRecentLogs(10)
-    expect(recent).toHaveLength(2)
-    expect(recent[0].msg).toBe('second')
-    expect(recent[1].msg).toBe('third')
+    const recent = getRecentLogs(200)
+    expect(recent).toHaveLength(100)
+    expect(recent[0].msg).toBe('msg_1')
+    expect(recent[recent.length - 1].msg).toBe('msg_100')
   })
 
   it('includes error entries in metrics and recent logs', async () => {
-    vi.stubEnv('LOG_BUFFER_MAX_ENTRIES', '10')
+    vi.stubEnv('LOG_BUFFER_MAX_ENTRIES', '100')
     const { log, getRecentLogs, getLogMetrics } = await import('./log.js')
 
     log.info('ok_event')
