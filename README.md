@@ -33,6 +33,8 @@ npm install
 npm run build
 ```
 
+`npm install` runs `npm run prepare`, which installs the local git hooks. If install scripts were skipped, run `npm run prepare` once to install them manually.
+
 ## Run
 ```bash
 PORT=3000 \
@@ -46,6 +48,10 @@ Dev mode:
 ```bash
 npm run dev
 ```
+
+## Local Git Hooks
+- `pre-commit` formats staged JS/TS/JSON files with Biome before the commit completes.
+- `pre-push` checks files changed on the branch against `origin/main` and blocks the push if formatting drift remains.
 
 ## Endpoints
 - `POST /v1/chat/completions`

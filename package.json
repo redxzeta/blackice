@@ -9,6 +9,9 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "dev": "tsx src/server.ts",
+    "prepare": "node scripts/install-git-hooks.mjs",
+    "format:staged": "biome format --write --staged --files-ignore-unknown=true --no-errors-on-unmatched",
+    "format:branch:check": "biome format --changed --since=origin/main --files-ignore-unknown=true --no-errors-on-unmatched",
     "version:patch": "npm version patch -m \"chore(release): %s\"",
     "version:minor": "npm version minor -m \"chore(release): %s\"",
     "version:major": "npm version major -m \"chore(release): %s\"",
@@ -24,6 +27,7 @@
     "zod": "^4.0.16"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.4.6",
     "@types/express": "^4.17.21",
     "@types/node": "^22.13.1",
     "tsx": "^4.19.2",
