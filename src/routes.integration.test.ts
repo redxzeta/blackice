@@ -80,4 +80,25 @@ describe('integration routes', () => {
     expect(res.status).toBe(400)
     expect(res.body.error).toBeDefined()
   })
+
+  it('GET /analyze/logs/metadata stays aligned with status endpoint list', async () => {
+    const { createApp } = await import('./app.js')
+    const app = createApp(1)
+
+    const [statusRes, metadataRes] = await Promise.all([
+      request(app).get('/analyze/logs/status'),
+      request(app).get('/analyze/logs/metadata'),
+    ])
+
+    expect(statusRes.status).toBe(200)
+    expect(metadataRes.status).toBe(200)
+
+    const metadataEndpoints = Object.values(metadataRes.body.endpoints) as Array<{
+      method: string
+      path: string
+    }>
+    const metadataPaths = metadataEndpoints.map((endpoint) => `${endpoint.method} ${endpoint.path}`)
+
+    expect(metadataPaths.sort()).toEqual([...statusRes.body.endpoints].sort())
+  })
 })
