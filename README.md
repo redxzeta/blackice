@@ -60,6 +60,7 @@ pnpm run dev
 ## Endpoints
 - `POST /v1/chat/completions`
 - `POST /v1/debate`
+- `GET /v1/debate/schema`
 - `POST /analyze/logs`
 - `POST /v1/policy/dry-run`
 - `GET /logs/recent` *(requires `OPS_ENABLED=1`)*
@@ -254,6 +255,11 @@ curl -sS -i http://127.0.0.1:3000/v1/debate \
     "turnsPerRound": 4,
     "includeModeratorSummary": true
   }'
+```
+
+Debate schema route:
+```bash
+curl -sS http://127.0.0.1:3000/v1/debate/schema
 ```
 
 Log Explainer route:
