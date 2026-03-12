@@ -61,6 +61,7 @@ pnpm run dev
 - `GET /version`
 - `GET /healthz`
 - `GET /readyz`
+- `GET /v1/models/check`
 - `GET /health/loki`
 
 ## Envelope Contract
@@ -119,6 +120,8 @@ Security controls:
 - `STREAM_SUPPRESS_TOOLISH` (`1` to suppress tool-call-like SSE payloads; default preserves raw output)
 - `READINESS_TIMEOUT_MS` (default `1500`; timeout in ms for `/readyz` Ollama probe, clamped to `100..10000`)
 - `READINESS_STRICT` (`1` or `0`, default `1`; when `1`, `/readyz` returns `503` if upstream is unavailable)
+- `MODEL_PREFLIGHT_ON_START` (`1` to fail startup when the configured Ollama model is missing; default `0`)
+- `MODEL_PREFLIGHT_TIMEOUT_MS` (default `2000`; timeout in ms for `/v1/models/check` and startup preflight, clamped to `200..10000`)
 - `BUILD_GIT_SHA` (optional; exposed by `GET /version`)
 - `BUILD_TIME` (optional ISO timestamp; exposed by `GET /version`)
 
@@ -294,6 +297,12 @@ Readiness check:
 Readiness check:
 ```bash
 curl -sS -i "http://127.0.0.1:3000/readyz"
+```
+
+Model availability check:
+```bash
+curl -sS "http://127.0.0.1:3000/v1/models/check"
+curl -sS "http://127.0.0.1:3000/v1/models/check?model=qwen2.5:14b"
 ```
 
 Runtime version:
