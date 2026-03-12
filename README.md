@@ -33,6 +33,8 @@ pnpm install
 pnpm run build
 ```
 
+`pnpm install` runs `pnpm run prepare`, which installs the local git hooks. If install scripts were skipped, run `pnpm run prepare` once to install them manually.
+
 ## Run
 ```bash
 PORT=3000 \
@@ -50,6 +52,10 @@ pnpm run dev
 ## Source Layout
 - Canonical runtime source lives in `src/` (TypeScript).
 - Legacy root JavaScript modules were removed; runtime code should live under `src/` only.
+
+## Local Git Hooks
+- `pre-commit` formats staged JS/TS/JSON files with Biome and re-stages the formatted content before the commit completes.
+- `pre-push` checks files changed on the branch against `origin/main` and blocks the push if formatting drift remains.
 
 ## Endpoints
 - `POST /v1/chat/completions`
