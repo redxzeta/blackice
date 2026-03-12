@@ -93,9 +93,11 @@ describe('integration routes', () => {
     expect(statusRes.status).toBe(200)
     expect(metadataRes.status).toBe(200)
 
-    const metadataPaths = Object.values(metadataRes.body.endpoints).map(
-      (endpoint: { method: string; path: string }) => `${endpoint.method} ${endpoint.path}`
-    )
+    const metadataEndpoints = Object.values(metadataRes.body.endpoints) as Array<{
+      method: string
+      path: string
+    }>
+    const metadataPaths = metadataEndpoints.map((endpoint) => `${endpoint.method} ${endpoint.path}`)
 
     expect(metadataPaths.sort()).toEqual([...statusRes.body.endpoints].sort())
   })
