@@ -60,7 +60,12 @@ pnpm run dev
 ## Endpoints
 - `POST /v1/chat/completions`
 - `POST /v1/debate`
+- `GET /v1/debate/schema`
 - `POST /analyze/logs`
+- `POST /analyze/logs/batch`
+- `GET /analyze/logs/targets`
+- `GET /analyze/logs/status`
+- `GET /analyze/logs/metadata`
 - `POST /v1/policy/dry-run`
 - `GET /logs/recent` *(requires `OPS_ENABLED=1`)*
 - `GET /logs/metrics` *(requires `OPS_ENABLED=1`)*
@@ -267,6 +272,76 @@ curl -sS http://127.0.0.1:3000/analyze/logs \
     "maxLines": 300
   }'
 ```
+
+Log Explainer endpoint guide:
+- Use `POST /analyze/logs` for one journald, journalctl, or docker target when you want a single analysis result.
+- Use `POST /analyze/logs/batch` when you need to analyze multiple journald targets in one request, or query Loki with rule-validated `filters`.
+- Use `GET /analyze/logs/targets` to list the synthetic Loki targets that are exposed for discovery.
+- Use `GET /analyze/logs/status` for a compact capability summary including enabled endpoints, limits, and target counts.
+- Use `GET /analyze/logs/metadata` for machine-readable route metadata, including request schema hints and response schema payloads.
+- Use `GET /health/loki` to check Loki readiness when Loki-backed batch analysis is enabled.
+
+Log Explainer status route:
+```bash
+curl -sS http://127.0.0.1:3000/analyze/logs/status
+```
+
+Example response shape:
+```json
+{
+  "service": "log-explainer",
+  "endpoints": [
+    "GET /analyze/logs/targets",
+    "GET /analyze/logs/status",
+    "GET /analyze/logs/metadata",
+    "GET /health/loki",
+    "POST /analyze/logs",
+    "POST /analyze/logs/batch"
+  ]
+}
+```
+
+Log Explainer metadata route:
+```bash
+curl -sS http://127.0.0.1:3000/analyze/logs/metadata
+```
+
+Example response shape:
+```json
+{
+  "service": "log-explainer",
+  "endpoints": {
+    "metadata": {
+      "method": "GET",
+      "path": "/analyze/logs/metadata"
+    },
+    "batch": {
+      "method": "POST",
+      "path": "/analyze/logs/batch"
+    }
+  },
+  "status": {
+    "service": "log-explainer"
+  }
+}
+```
+
+Incremental Loki batch analysis route:
+```bash
+curl -sS http://127.0.0.1:3000/analyze/logs/batch \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "source": "loki",
+    "filters": {"job":"journald","host":"owonto","unit":"blackice-router.service"},
+    "contains": "request_id=",
+    "sinceSeconds": 300,
+    "limit": 200,
+    "mode": "raw",
+    "evidenceLines": 5
+  }'
+```
+
+Use this incremental pattern for short rolling windows where a caller already knows the scope and wants fresh evidence without a full multi-target batch pass.
 
 Loki batch analysis route (rule-validated filters):
 ```bash
