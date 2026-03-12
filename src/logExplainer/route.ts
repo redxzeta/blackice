@@ -155,8 +155,8 @@ type LogExplainerMetadataEndpoint = {
 }
 
 function buildMetadataEndpoints(): Record<string, LogExplainerMetadataEndpoint> {
-  const endpointEntries: Array<[string, LogExplainerMetadataEndpoint]> = LOG_EXPLAINER_ENDPOINTS.map(
-    (endpoint) => {
+  const endpointEntries: Array<[string, LogExplainerMetadataEndpoint]> =
+    LOG_EXPLAINER_ENDPOINTS.map((endpoint) => {
       switch (endpoint) {
         case 'GET /analyze/logs/targets':
           return [
@@ -235,8 +235,7 @@ function buildMetadataEndpoints(): Record<string, LogExplainerMetadataEndpoint> 
             },
           ]
       }
-    }
-  )
+    })
 
   return Object.fromEntries(endpointEntries)
 }
