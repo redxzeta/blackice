@@ -6,19 +6,13 @@ The Log Explainer endpoint is part of the main server process (`src/server.ts`).
 
 ```bash
 PORT=3000 \
-OLLAMA_BASE_URL=http://192.168.1.230:11434 \
-OLLAMA_MODEL=qwen2.5:14b \
-OLLAMA_TIMEOUT_MS=45000 \
-OLLAMA_RETRY_ATTEMPTS=2 \
-OLLAMA_RETRY_BACKOFF_MS=1000 \
-ALLOWED_LOG_FILES=/var/log/syslog,/var/log/auth.log \
+BLACKICE_CONFIG_FILE=./config/blackice.local.yaml \
 npm start
 ```
 
 ## Endpoint
 
 `POST /analyze/logs`
-`POST /analyze/logs/incremental`
 `POST /analyze/logs/batch`
 `GET /analyze/logs/targets`
 `GET /analyze/logs/status`
@@ -61,25 +55,21 @@ curl -sS http://127.0.0.1:3000/analyze/logs/metadata
 ```
 
 ```bash
-curl -sS http://127.0.0.1:3000/analyze/logs/incremental \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "source": "file",
-    "target": "/var/log/remote/paperless-ngx.log",
-    "cursor": 0,
-    "hours": 6,
-    "maxLines": 300
-  }'
-```
-
-```bash
 curl -sS http://127.0.0.1:3000/analyze/logs/batch \
   -H 'Content-Type: application/json' \
   -d '{
-    "source": "file",
-    "hours": 6,
-    "maxLines": 300,
-    "concurrency": 2
+    "source": "loki",
+    "filters": {
+      "job": "journald",
+      "host": "owonto",
+      "unit": "blackice-router.service"
+    },
+    "mode": "both",
+    "contains": "request_id=...",
+    "regex": "status=(5..|4..)",
+    "sinceSeconds": 900,
+    "limit": 2000,
+    "evidenceLines": 10
   }'
 ```
 
@@ -93,12 +83,24 @@ curl -sS http://127.0.0.1:3000/analyze/logs/batch \
 
 ## Safety controls
 
-- Uses only read-only collectors: `journalctl`, `docker logs`, and explicit allowlisted files.
+- Uses only read-only collectors: `journalctl`, `docker logs`, and Loki query_range.
+- Loki source is read-only via `/loki/api/v1/query_range`.
+- Loki selectors are constructed internally from validated `filters` (raw `query` and selector strings are rejected).
+- Loki/Ollama runtime config is loaded from `BLACKICE_CONFIG_FILE` YAML.
 - No shell mode execution (`spawn` with `shell: false`).
-- Command and file output byte caps are enforced.
+- Command output byte caps are enforced.
+- Loki guards: default 15-minute window, max window (default 60 minutes), max line cap, max response bytes, and scoped-label requirement (`host` or `unit`) unless `allowUnscoped: true`.
 - LLM output is policy-checked; unsafe command-like content is redacted with a safety note.
+- Batch `mode` supports `analyze` (analysis only), `raw` (evidence only, no model call), and `both` (analysis + evidence).
+- Evidence excerpts are bounded via `evidenceLines` (max `50`; default `10` for `raw`/`both`).
 - No file writes, no delete operations, no remediation commands.
 - Ollama call has a request timeout.
+
+## Loki Error Cases
+
+- `400`: missing scope labels, invalid/reversed time range, or time window over max.
+- `504`: Loki query timeout.
+- `502`: Loki upstream error or malformed payload.
 
 ## OpenClaw
 

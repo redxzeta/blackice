@@ -1,4 +1,12 @@
-import type { AnalyzeLogsRequest } from './schema.js';
+import type { AnalyzeLogsRequest } from './schema.js'
+import { getRuntimeConfig } from '../config/runtimeConfig.js'
+
+export type AnalyzePromptRequest = Pick<
+  AnalyzeLogsRequest,
+  'target' | 'hours' | 'maxLines' | 'analyze' | 'collectOnly'
+> & {
+  source: AnalyzeLogsRequest['source'] | 'loki'
+}
 
 export const SYSTEM_PROMPT = `You are a senior Linux infrastructure engineer acting as a read-only log analysis assistant.
 
@@ -18,23 +26,25 @@ Output format requirements:
   4. Confidence (High/Medium/Low)
   5. Recommended Next Safe Checks (read-only)
 - In "Recommended Next Safe Checks", list only observational commands (for example: journalctl queries, systemctl status, docker logs, cat, grep, ss, ls).
-`;
+`
 
-const MAX_LOG_CHARS = Number(process.env.MAX_LOG_CHARS ?? 40_000);
+const MAX_LOG_CHARS = Number(getRuntimeConfig().limits.maxLogChars)
 
 export function truncateLogs(input: string): { text: string; truncated: boolean } {
   if (input.length <= MAX_LOG_CHARS) {
-    return { text: input, truncated: false };
+    return { text: input, truncated: false }
   }
 
   // Keep recent lines because root-cause signals are usually near the tail.
   return {
     text: input.slice(input.length - MAX_LOG_CHARS),
-    truncated: true
-  };
+    truncated: true,
+  }
 }
 
-export function buildUserPrompt(request: AnalyzeLogsRequest & { logs: string; truncated: boolean }): string {
+export function buildUserPrompt(
+  request: AnalyzePromptRequest & { logs: string; truncated: boolean }
+): string {
   return `Analyze the following logs and produce a structured markdown report.
 
 Context:
@@ -47,5 +57,5 @@ Context:
 Logs:
 \`\`\`
 ${request.logs}
-\`\`\``;
+\`\`\``
 }

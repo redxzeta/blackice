@@ -1,104 +1,109 @@
-type LogLevel = 'debug' | 'info';
-type LogLevelWithError = LogLevel | 'error';
+import { env } from './config/env.js'
+
+type LogLevel = 'debug' | 'info'
+type LogLevelWithError = LogLevel | 'error'
 
 type LogEntry = {
-  ts: string;
-  level: LogLevelWithError;
-  msg: string;
-  fields: Record<string, unknown>;
-};
+  ts: string
+  level: LogLevelWithError
+  msg: string
+  fields: Record<string, unknown>
+}
 
-const level: LogLevel = process.env.LOG_LEVEL === 'debug' ? 'debug' : 'info';
-const maxLogBufferEntries = Number(process.env.LOG_BUFFER_MAX_ENTRIES ?? 2000);
-const logBuffer: LogEntry[] = [];
+const level: LogLevel = env.LOG_LEVEL
+const maxLogBufferEntries = env.LOG_BUFFER_MAX_ENTRIES
+const logBuffer: LogEntry[] = []
 
 function shouldLog(msgLevel: LogLevel): boolean {
   if (level === 'debug') {
-    return true;
+    return true
   }
-  return msgLevel === 'info';
+  return msgLevel === 'info'
 }
 
 function baseLog(msgLevel: LogLevel, message: string, fields: Record<string, unknown> = {}): void {
-  const ts = new Date().toISOString();
+  const ts = new Date().toISOString()
   pushLogEntry({
     ts,
     level: msgLevel,
     msg: message,
-    fields
-  });
+    fields,
+  })
 
   if (!shouldLog(msgLevel)) {
-    return;
+    return
   }
 
   const payload = {
     ts,
     level: msgLevel,
     msg: message,
-    ...fields
-  };
+    ...fields,
+  }
 
-  process.stdout.write(`${JSON.stringify(payload)}\n`);
+  process.stdout.write(`${JSON.stringify(payload)}\n`)
 }
 
 function pushLogEntry(entry: LogEntry): void {
-  logBuffer.push(entry);
+  logBuffer.push(entry)
   while (logBuffer.length > maxLogBufferEntries) {
-    logBuffer.shift();
+    logBuffer.shift()
   }
 }
 
 function parseWindowMs(raw: string | undefined): number {
   if (!raw) {
-    return 60 * 60 * 1000;
+    return 60 * 60 * 1000
   }
 
-  const trimmed = raw.trim().toLowerCase();
-  const match = /^(\d+)([smhd])$/.exec(trimmed);
+  const trimmed = raw.trim().toLowerCase()
+  const match = /^(\d+)([smhd])$/.exec(trimmed)
   if (!match) {
-    return 60 * 60 * 1000;
+    return 60 * 60 * 1000
   }
 
-  const value = Number(match[1]);
-  const unit = match[2];
+  const value = Number(match[1])
+  const unit = match[2]
   const multiplier =
-    unit === 's' ? 1000 :
-      unit === 'm' ? 60 * 1000 :
-        unit === 'h' ? 60 * 60 * 1000 :
-          24 * 60 * 60 * 1000;
+    unit === 's'
+      ? 1000
+      : unit === 'm'
+        ? 60 * 1000
+        : unit === 'h'
+          ? 60 * 60 * 1000
+          : 24 * 60 * 60 * 1000
 
-  return value * multiplier;
+  return value * multiplier
 }
 
 export function getRecentLogs(limit = 100): LogEntry[] {
-  const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(Math.floor(limit), 1000)) : 100;
-  return logBuffer.slice(-safeLimit);
+  const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(Math.floor(limit), 1000)) : 100
+  return logBuffer.slice(-safeLimit)
 }
 
 export function getLogMetrics(windowRaw: string | undefined): {
-  window: string;
-  windowMs: number;
-  total: number;
-  byLevel: Record<LogLevelWithError, number>;
-  byMessage: Record<string, number>;
+  window: string
+  windowMs: number
+  total: number
+  byLevel: Record<LogLevelWithError, number>
+  byMessage: Record<string, number>
 } {
-  const window = windowRaw?.trim() ? windowRaw.trim() : '1h';
-  const windowMs = parseWindowMs(windowRaw);
-  const sinceTs = Date.now() - windowMs;
-  const byLevel: Record<LogLevelWithError, number> = { debug: 0, info: 0, error: 0 };
-  const byMessage: Record<string, number> = {};
-  let total = 0;
+  const window = windowRaw?.trim() ? windowRaw.trim() : '1h'
+  const windowMs = parseWindowMs(windowRaw)
+  const sinceTs = Date.now() - windowMs
+  const byLevel: Record<LogLevelWithError, number> = { debug: 0, info: 0, error: 0 }
+  const byMessage: Record<string, number> = {}
+  let total = 0
 
   for (const entry of logBuffer) {
-    const ts = Date.parse(entry.ts);
+    const ts = Date.parse(entry.ts)
     if (Number.isNaN(ts) || ts < sinceTs) {
-      continue;
+      continue
     }
 
-    total += 1;
-    byLevel[entry.level] += 1;
-    byMessage[entry.msg] = (byMessage[entry.msg] ?? 0) + 1;
+    total += 1
+    byLevel[entry.level] += 1
+    byMessage[entry.msg] = (byMessage[entry.msg] ?? 0) + 1
   }
 
   return {
@@ -106,32 +111,32 @@ export function getLogMetrics(windowRaw: string | undefined): {
     windowMs,
     total,
     byLevel,
-    byMessage
-  };
+    byMessage,
+  }
 }
 
 export const log = {
   debug: (message: string, fields: Record<string, unknown> = {}): void => {
-    baseLog('debug', message, fields);
+    baseLog('debug', message, fields)
   },
   info: (message: string, fields: Record<string, unknown> = {}): void => {
-    baseLog('info', message, fields);
+    baseLog('info', message, fields)
   },
   error: (message: string, fields: Record<string, unknown> = {}): void => {
-    const ts = new Date().toISOString();
+    const ts = new Date().toISOString()
     pushLogEntry({
       ts,
       level: 'error',
       msg: message,
-      fields
-    });
+      fields,
+    })
 
     const payload = {
       ts,
       level: 'error',
       msg: message,
-      ...fields
-    };
-    process.stderr.write(`${JSON.stringify(payload)}\n`);
-  }
-};
+      ...fields,
+    }
+    process.stderr.write(`${JSON.stringify(payload)}\n`)
+  },
+}

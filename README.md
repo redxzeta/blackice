@@ -20,47 +20,54 @@ flowchart LR
   BI -->|"LLM generation"| OL
   LXC -->|"rsyslog forward (TCP 514)"| BI
   BI -->|"writes remote logs"| RF
-  BI -->|"source=file target=/var/log/remote/*.log"| RF
+  BI -->|"source=loki (query_range)"| RF
 ```
 
 ## Requirements
 - Node.js 18+
-- Ollama reachable at `http://<OLLAMA_HOST>:11434` (or set `OLLAMA_BASE_URL`)
+- Environment config YAML present (`BLACKICE_CONFIG_FILE`, default `./config/blackice.local.yaml`)
 
 ## Install
 ```bash
-npm install
-npm run build
+pnpm install
+pnpm run build
 ```
 
-`npm install` runs `npm run prepare`, which installs the local git hooks. If install scripts were skipped, run `npm run prepare` once to install them manually.
+`pnpm install` runs `pnpm run prepare`, which installs the local git hooks. If install scripts were skipped, run `pnpm run prepare` once to install them manually.
 
 ## Run
 ```bash
 PORT=3000 \
-OLLAMA_BASE_URL=http://<OLLAMA_HOST>:11434 \
+BLACKICE_CONFIG_FILE=./config/blackice.local.yaml \
 ACTIONS_ENABLED=true \
 LOG_LEVEL=info \
-npm start
+pnpm start
 ```
 
 Dev mode:
 ```bash
-npm run dev
+pnpm run dev
 ```
 
+## Source Layout
+- Canonical runtime source lives in `src/` (TypeScript).
+- Legacy root JavaScript modules were removed; runtime code should live under `src/` only.
+
 ## Local Git Hooks
-- `pre-commit` formats staged JS/TS/JSON files with Biome before the commit completes.
+- `pre-commit` formats staged JS/TS/JSON files with Biome and re-stages the formatted content before the commit completes.
 - `pre-push` checks files changed on the branch against `origin/main` and blocks the push if formatting drift remains.
 
 ## Endpoints
 - `POST /v1/chat/completions`
 - `POST /v1/debate`
 - `POST /analyze/logs`
-- `GET /logs/recent`
-- `GET /logs/metrics`
+- `POST /v1/policy/dry-run`
+- `GET /logs/recent` *(requires `OPS_ENABLED=1`)*
+- `GET /logs/metrics` *(requires `OPS_ENABLED=1`)*
 - `GET /version`
 - `GET /healthz`
+- `GET /readyz`
+- `GET /health/loki`
 
 ## Envelope Contract
 Latest `user` message is interpreted as:
@@ -96,15 +103,71 @@ Security controls:
 - `OLLAMA_BASE_URL` (default: `http://localhost:11434`)
 - `OLLAMA_MODEL` (default: `qwen2.5:14b`)
 - `PORT` (default: `3000`)
+- `BLACKICE_CONFIG_FILE` (default: `./config/blackice.local.yaml`; use `./config/blackice.e2e.yaml` or `./config/blackice.prod.yaml`)
 - `ACTIONS_ENABLED` (`true`/`false`, default `true`)
 - `LOG_LEVEL` (`info`/`debug`, default `info`)
 - `ALLOWLIST_LOG_PATHS` (comma-separated absolute files or directories)
-- `ALLOWED_LOG_FILES` (comma-separated absolute files for `source: "file"` in `/analyze/logs`)
+- `LOKI_BASE_URL` (enables Loki log source for `/analyze/logs/batch` when set)
+- `LOKI_RULES_FILE` (required path to YAML rules file when `LOKI_BASE_URL` is set)
+- `LOKI_TIMEOUT_MS` (default `10000`; timeout for Loki `query_range`)
+- `LOKI_MAX_WINDOW_MINUTES` (default `60`; max `start`/`end` window for Loki query mode)
+- `LOKI_DEFAULT_WINDOW_MINUTES` (default `15`; default window when `start`/`end` omitted)
+- `LOKI_MAX_LINES_CAP` (default `2000`; cap for Loki query mode `limit`)
+- `LOKI_MAX_RESPONSE_BYTES` (default `2000000`; cap for Loki lines payload in query mode)
+- `LOKI_REQUIRE_SCOPE_LABELS` (default `true`; requires `host` or `unit` in query mode unless `allowUnscoped=true`)
+- `MAX_QUERY_HOURS` (max log query lookback window)
+- `MAX_LINES` (effective cap for collected lines)
+- `MAX_CONCURRENCY` (max allowed batch concurrency)
 - `DEBATE_MODEL_ALLOWLIST` (comma-separated model IDs allowed for `/v1/debate`)
 - `DEBATE_MAX_CONCURRENT` (default `1`; max active `/v1/debate` requests)
 - `LOG_BUFFER_MAX_ENTRIES` (default `2000`; in-memory API log buffer size for `/logs/*`)
+- `OPS_ENABLED` (`1` to expose `/logs/recent` and `/logs/metrics`; default disabled)
+- `STREAM_SUPPRESS_TOOLISH` (`1` to suppress tool-call-like SSE payloads; default preserves raw output)
+- `READINESS_TIMEOUT_MS` (default `1500`; timeout in ms for `/readyz` Ollama probe, clamped to `100..10000`)
+- `READINESS_STRICT` (`1` or `0`, default `1`; when `1`, `/readyz` returns `503` if upstream is unavailable)
 - `BUILD_GIT_SHA` (optional; exposed by `GET /version`)
 - `BUILD_TIME` (optional ISO timestamp; exposed by `GET /version`)
+
+Loki rules YAML format:
+```yaml
+job: journald
+allowedLabels: [job, host, unit, app, service_name]
+hosts: [owonto, uwuntu]
+units: [openclaw.service, blackice-router.service, promtail.service]
+# hostsRegex: "^prod-(api|worker)-\\d+$"
+# unitsRegex: "^[a-z0-9-]+\\.service$"
+```
+
+Example file: `config/loki-rules.example.yaml`
+
+Environment config files:
+- `config/blackice.local.yaml`
+- `config/blackice.e2e.yaml`
+- `config/blackice.prod.yaml`
+
+Config precedence:
+- `BLACKICE_CONFIG_FILE` selects which YAML file is loaded.
+
+## Testing
+Run the full test suite:
+```bash
+pnpm test
+```
+
+Run only unit tests:
+```bash
+pnpm run test:unit
+```
+
+Run only integration tests:
+```bash
+pnpm run test:integration
+```
+
+Watch mode:
+```bash
+pnpm run test:watch
+```
 
 ## Quick Tests
 Streaming CHAT:
@@ -149,6 +212,34 @@ curl -sS http://127.0.0.1:3000/v1/chat/completions \
   }'
 ```
 
+
+Policy dry-run (no model/action execution):
+```bash
+curl -sS http://127.0.0.1:3000/v1/policy/dry-run \
+  -H 'Content-Type: application/json' \
+  -H 'x-request-id: demo-dryrun-001' \
+  -d '{
+    "model": "router/default",
+    "stream": true,
+    "messages": [{"role":"user","content":"Explain RAID levels in simple terms."}]
+  }'
+```
+
+Example response shape:
+```json
+{
+  "mode": "dry_run",
+  "execute": false,
+  "envelope": {"kind": "chat", "raw": "Explain RAID levels in simple terms."},
+  "route": {
+    "kind": "chat",
+    "workerModel": "llama3.1:8b",
+    "reason": "default_general",
+    "stream": true
+  }
+}
+```
+
 Debate route:
 ```bash
 curl -sS -i http://127.0.0.1:3000/v1/debate \
@@ -177,6 +268,22 @@ curl -sS http://127.0.0.1:3000/analyze/logs \
   }'
 ```
 
+Loki batch analysis route (rule-validated filters):
+```bash
+curl -sS http://127.0.0.1:3000/analyze/logs/batch \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "source": "loki",
+    "filters": {"job":"journald","host":"owonto","unit":"blackice-router.service"},
+    "mode": "both",
+    "contains": "request_id=",
+    "regex": "status=(5..|4..)",
+    "sinceSeconds": 900,
+    "limit": 500,
+    "evidenceLines": 10
+  }'
+```
+
 Recent API logs:
 ```bash
 curl -sS "http://127.0.0.1:3000/logs/recent?limit=100"
@@ -185,6 +292,14 @@ curl -sS "http://127.0.0.1:3000/logs/recent?limit=100"
 API metrics (last 1 hour):
 ```bash
 curl -sS "http://127.0.0.1:3000/logs/metrics?window=1h"
+```
+
+Readiness check:
+
+
+Readiness check:
+```bash
+curl -sS -i "http://127.0.0.1:3000/readyz"
 ```
 
 Runtime version:
@@ -212,14 +327,14 @@ curl -sS "http://127.0.0.1:3000/version"
 ```
 - Semver release tags (creates commit + tag):
 ```bash
-npm run version:patch
-# or: npm run version:minor
-# or: npm run version:major
+pnpm run version:patch
+# or: pnpm run version:minor
+# or: pnpm run version:major
 git push origin main --follow-tags
 ```
 - Change tags for non-release checkpoints (tag current commit only):
 ```bash
-npm run tag:change
+pnpm run tag:change
 git push origin main --tags
 ```
 

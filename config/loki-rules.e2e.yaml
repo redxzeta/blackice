@@ -1,0 +1,13 @@
+job: journald
+allowedLabels:
+  - job
+  - host
+  - unit
+  - app
+  - service_name
+hosts:
+  - localhost
+  - e2e-runner
+units:
+  - openclaw.service
+  - blackice-router.service

@@ -1,397 +1,641 @@
-import { type Request, type Response, type Express } from 'express';
-import { log } from '../log.js';
+import type { Request, Response, Express } from 'express'
+import { log } from '../log.js'
 import {
-  ANALYZE_MAX_LINES_REQUEST,
+  BATCH_EVIDENCE_LINES_DEFAULT,
+  BATCH_EVIDENCE_LINES_MAX,
   AnalyzeLogsBatchRequestSchema,
   AnalyzeLogsBatchResponseSchema,
-  AnalyzeLogsIncrementalRequestSchema,
-  AnalyzeLogsIncrementalResponseSchema,
   AnalyzeLogsRequestSchema,
   AnalyzeLogsResponseSchema,
-  AnalyzeLogsStatusResponseSchema,
   AnalyzeLogsTargetsResponseSchema,
-  BATCH_CONCURRENCY_MAX,
-  BATCH_CONCURRENCY_MIN,
   LogExplainerJsonSchemas,
   type AnalyzeLogsBatchResultError,
   type AnalyzeLogsBatchResultOk,
-  type AnalyzeLogsIncrementalResponse,
-  type AnalyzeLogsRequest
-} from './schema.js';
+  type AnalyzeLogsRequest,
+} from './schema.js'
 import {
-  collectFileLogsIncremental,
+  checkLokiHealth,
   collectLogs,
-  getAllowedLogFileTargets,
-  getLogCollectorLimits
-} from './logCollector.js';
-import { analyzeLogsWithOllama, getOllamaRuntimeMetadata } from './ollamaClient.js';
-import { SYSTEM_PROMPT, buildUserPrompt, truncateLogs } from './promptTemplates.js';
-import { ensureReadOnlyAnalysisOutput, sanitizeReadOnlyAnalysisOutput } from './outputSafety.js';
-
-function errStatus(error: unknown): number {
-  if (typeof error === 'object' && error !== null && 'status' in error) {
-    const status = (error as { status?: unknown }).status;
-    if (typeof status === 'number') {
-      return status;
-    }
-  }
-  return 500;
-}
-
-function errMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return String(error);
-}
+  collectLokiBatchLogs,
+  ensureLokiRulesConfigured,
+  getLokiSyntheticTargets,
+} from './logCollector.js'
+import { analyzeLogsWithOllama } from './ollamaClient.js'
+import {
+  SYSTEM_PROMPT,
+  buildUserPrompt,
+  truncateLogs,
+  type AnalyzePromptRequest,
+} from './promptTemplates.js'
+import {
+  ensureReadOnlyAnalysisOutput,
+  sanitizeReadOnlyAnalysisOutput,
+  sanitizeReadOnlyEvidenceLine,
+} from './outputSafety.js'
+import { errMessage, toHttpError } from '../http/errors.js'
+import { getRequestId } from '../http/requestLogging.js'
+import { parseBodyOrRespond } from '../http/validation.js'
+import { buildLogExplainerStatus, LOG_EXPLAINER_ENDPOINTS } from './status.js'
+import { resolveSafetyIdentifier } from '../ai/safetyIdentifier.js'
 
 type AnalysisResult = {
-  analysis: string;
+  analysis: string
+  no_logs?: boolean
+  message?: string
   safety?: {
-    redacted: boolean;
-    reasons: string[];
-  };
-};
-
-async function analyzeOneRequest(request: AnalyzeLogsRequest): Promise<AnalysisResult> {
-  const rawLogs = await collectLogs(request);
-  return analyzeFromRawLogs(request, rawLogs);
+    redacted: boolean
+    reasons: string[]
+  }
 }
 
-async function analyzeFromRawLogs(request: AnalyzeLogsRequest, rawLogs: string): Promise<AnalysisResult> {
-  if (!rawLogs.trim()) {
-    const err = new Error('No logs were collected for the given query') as Error & { status: number };
-    err.status = 422;
-    throw err;
+type BatchMode = 'analyze' | 'raw' | 'both'
+type EvidenceLine = {
+  ts: string
+  line: string
+}
+
+const ISO_OR_SHORT_TS_PREFIX = /^(\d{4}-\d{2}-\d{2}[ T][^\s]+)\s+(.*)$/
+const LOKI_NS_TS_PREFIX = /^(\d{16,20})\s+(.*)$/
+const MAX_EVIDENCE_LINE_CHARS = 2_000
+
+function clampEvidenceLine(line: string): string {
+  if (line.length <= MAX_EVIDENCE_LINE_CHARS) {
+    return line
+  }
+  return `${line.slice(0, MAX_EVIDENCE_LINE_CHARS)} [truncated]`
+}
+
+function parseEvidenceLine(rawLine: string): EvidenceLine {
+  const trimmed = rawLine.trim()
+
+  const isoMatch = trimmed.match(ISO_OR_SHORT_TS_PREFIX)
+  if (isoMatch) {
+    return {
+      ts: isoMatch[1],
+      line: clampEvidenceLine(sanitizeReadOnlyEvidenceLine(isoMatch[2])),
+    }
   }
 
-  const { text: logs, truncated } = truncateLogs(rawLogs);
-  const userPrompt = buildUserPrompt({ ...request, logs, truncated });
+  const lokiMatch = trimmed.match(LOKI_NS_TS_PREFIX)
+  if (lokiMatch) {
+    return {
+      ts: lokiMatch[1],
+      line: clampEvidenceLine(sanitizeReadOnlyEvidenceLine(lokiMatch[2])),
+    }
+  }
+
+  return {
+    ts: '',
+    line: clampEvidenceLine(sanitizeReadOnlyEvidenceLine(trimmed)),
+  }
+}
+
+function buildEvidence(
+  rawLogs: string,
+  requestedLines: number | undefined
+): EvidenceLine[] | undefined {
+  if (requestedLines === undefined) {
+    return undefined
+  }
+
+  const boundedCount = Math.max(1, Math.min(requestedLines, BATCH_EVIDENCE_LINES_MAX))
+  const lines = rawLogs
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter((line) => line.trim().length > 0)
+
+  const sampled = lines.slice(-boundedCount)
+  return sampled.map((line) => parseEvidenceLine(line))
+}
+
+function resolveBatchMode(input: { mode?: BatchMode; analyze?: boolean; collectOnly?: boolean }): {
+  mode: BatchMode
+  legacyCollectOnly: boolean
+} {
+  if (input.mode) {
+    return {
+      mode: input.mode,
+      legacyCollectOnly: false,
+    }
+  }
+
+  if (input.collectOnly === true || input.analyze === false) {
+    return {
+      mode: 'raw',
+      legacyCollectOnly: true,
+    }
+  }
+
+  return {
+    mode: 'analyze',
+    legacyCollectOnly: false,
+  }
+}
+
+function resolveEvidenceLinesForMode(
+  mode: BatchMode,
+  requested: number | undefined
+): number | undefined {
+  if (mode === 'analyze') {
+    return undefined
+  }
+  return requested ?? BATCH_EVIDENCE_LINES_DEFAULT
+}
+
+type AnalysisContext = {
+  requestId?: string
+  safetyIdentifier?: string
+}
+
+type LogExplainerMetadataEndpoint = {
+  method: 'GET' | 'POST'
+  path: string
+  requestSchema?: Record<string, string>
+  responseSchema?: unknown
+}
+
+function buildMetadataEndpoints(): Record<string, LogExplainerMetadataEndpoint> {
+  const endpointEntries: Array<[string, LogExplainerMetadataEndpoint]> =
+    LOG_EXPLAINER_ENDPOINTS.map((endpoint) => {
+      switch (endpoint) {
+        case 'GET /analyze/logs/targets':
+          return [
+            'targets',
+            {
+              method: 'GET',
+              path: '/analyze/logs/targets',
+              responseSchema: LogExplainerJsonSchemas.analyzeLogsTargetsResponse,
+            },
+          ]
+        case 'POST /analyze/logs':
+          return [
+            'analyze',
+            {
+              method: 'POST',
+              path: '/analyze/logs',
+              requestSchema: {
+                source: 'journalctl | journald | docker',
+                target: 'string',
+                hours: 'number',
+                maxLines: 'number',
+              },
+              responseSchema: LogExplainerJsonSchemas.analyzeLogsResponse,
+            },
+          ]
+        case 'POST /analyze/logs/batch':
+          return [
+            'batch',
+            {
+              method: 'POST',
+              path: '/analyze/logs/batch',
+              requestSchema: {
+                source: 'journald | loki',
+                targets: 'string[] (optional; journald units)',
+                filters: 'record<string,string> (required when source=loki; selector labels)',
+                contains: 'string (optional; source=loki line filter)',
+                regex: 'string (optional; source=loki regex line filter)',
+                start: 'ISO-8601 datetime (optional; source=loki)',
+                end: 'ISO-8601 datetime (optional; source=loki)',
+                sinceSeconds: 'number (optional; source=loki relative time window)',
+                limit: 'number (optional; source=loki)',
+                allowUnscoped: 'boolean (optional; source=loki)',
+                hours: 'number (optional)',
+                sinceMinutes: 'number (optional; overrides hours for source=loki)',
+                maxLines: 'number (optional)',
+                mode: 'analyze | raw | both (optional; default analyze)',
+                evidenceLines:
+                  'number (optional; max 50; includes evidence excerpts per success result)',
+                concurrency: 'number (optional)',
+              },
+              responseSchema: LogExplainerJsonSchemas.analyzeLogsBatchResponse,
+            },
+          ]
+        case 'GET /analyze/logs/status':
+          return [
+            'status',
+            {
+              method: 'GET',
+              path: '/analyze/logs/status',
+            },
+          ]
+        case 'GET /analyze/logs/metadata':
+          return [
+            'metadata',
+            {
+              method: 'GET',
+              path: '/analyze/logs/metadata',
+            },
+          ]
+        case 'GET /health/loki':
+          return [
+            'healthLoki',
+            {
+              method: 'GET',
+              path: '/health/loki',
+            },
+          ]
+      }
+    })
+
+  return Object.fromEntries(endpointEntries)
+}
+
+async function analyzeOneRequest(
+  request: AnalyzeLogsRequest,
+  ctx: AnalysisContext
+): Promise<AnalysisResult> {
+  const rawLogs = await collectLogs(request)
+
+  const shouldAnalyze = request.analyze !== false && request.collectOnly !== true
+
+  if (!shouldAnalyze) {
+    return { analysis: rawLogs }
+  }
+
+  return analyzeFromRawLogs(request, rawLogs, ctx)
+}
+
+async function analyzeFromRawLogs(
+  request: AnalyzePromptRequest,
+  rawLogs: string,
+  ctx: AnalysisContext
+): Promise<AnalysisResult> {
+  if (!rawLogs.trim()) {
+    return {
+      analysis: '',
+      no_logs: true,
+      message: 'No logs were collected for the given query',
+    }
+  }
+
+  const { text: logs, truncated } = truncateLogs(rawLogs)
+  const userPrompt = buildUserPrompt({ ...request, logs, truncated })
   const analysis = await analyzeLogsWithOllama({
     systemPrompt: SYSTEM_PROMPT,
-    userPrompt
-  });
+    userPrompt,
+    requestId: ctx.requestId,
+    safetyIdentifier: ctx.safetyIdentifier,
+  })
 
-  const safety = ensureReadOnlyAnalysisOutput(analysis);
+  const safety = ensureReadOnlyAnalysisOutput(analysis)
   if (!safety.safe) {
-    const sanitized = sanitizeReadOnlyAnalysisOutput(analysis);
+    const sanitized = sanitizeReadOnlyAnalysisOutput(analysis)
 
     log.info('log_explainer_output_redacted', {
       reason: safety.reason,
       redacted: sanitized.redacted,
-      reasons: sanitized.reasons
-    });
+      reasons: sanitized.reasons,
+    })
 
     return {
       analysis: sanitized.analysis,
       safety: {
         redacted: sanitized.redacted,
-        reasons: sanitized.reasons
-      }
-    };
+        reasons: sanitized.reasons,
+      },
+    }
   }
 
-  return { analysis };
+  return { analysis }
 }
 
-async function runConcurrent<T, R>(items: T[], concurrency: number, worker: (item: T) => Promise<R>): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let index = 0;
+async function runConcurrent<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length)
+  let index = 0
 
   const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
     while (true) {
-      const current = index;
-      index += 1;
+      const current = index
+      index += 1
 
       if (current >= items.length) {
-        break;
+        break
       }
 
-      results[current] = await worker(items[current]);
+      results[current] = await worker(items[current])
     }
-  });
+  })
 
-  await Promise.all(runners);
-  return results;
+  await Promise.all(runners)
+  return results
 }
 
 export function registerLogExplainerRoutes(app: Express): void {
   app.get('/analyze/logs/targets', (_req: Request, res: Response) => {
-    const targets = getAllowedLogFileTargets();
-    const body = AnalyzeLogsTargetsResponseSchema.parse({ targets });
-    res.status(200).json(body);
-  });
+    try {
+      ensureLokiRulesConfigured()
+      const targets = [...getLokiSyntheticTargets()]
+      const body = AnalyzeLogsTargetsResponseSchema.parse({ targets })
+      res.status(200).json(body)
+    } catch (error: unknown) {
+      const httpError = toHttpError(error)
+      res.status(httpError.status).json({ error: httpError.message })
+    }
+  })
+
+  app.get('/health/loki', async (_req: Request, res: Response) => {
+    const health = await checkLokiHealth()
+    res.status(health.ok ? 200 : health.status).json(health)
+  })
 
   app.get('/analyze/logs/status', (_req: Request, res: Response) => {
-    const targets = getAllowedLogFileTargets();
-    const collectorLimits = getLogCollectorLimits();
-    const ollama = getOllamaRuntimeMetadata();
-    const endpoints = [
-      'GET /analyze/logs/targets',
-      'GET /analyze/logs/status',
-      'GET /analyze/logs/metadata',
-      'POST /analyze/logs',
-      'POST /analyze/logs/incremental',
-      'POST /analyze/logs/batch'
-    ];
-
-    const body = AnalyzeLogsStatusResponseSchema.parse({
-      endpoints,
-      limits: {
-        maxHours: collectorLimits.maxHours,
-        maxLinesRequest: ANALYZE_MAX_LINES_REQUEST,
-        maxLinesEffectiveCap: collectorLimits.maxLinesCap,
-        batchConcurrencyMin: BATCH_CONCURRENCY_MIN,
-        batchConcurrencyMax: BATCH_CONCURRENCY_MAX
-      },
-      targets: {
-        count: targets.length,
-        items: targets
-      },
-      llm: ollama
-    });
-
-    res.status(200).json(body);
-  });
+    res.status(200).json(buildLogExplainerStatus())
+  })
 
   app.get('/analyze/logs/metadata', (_req: Request, res: Response) => {
-    const status = AnalyzeLogsStatusResponseSchema.parse({
-      endpoints: [
-        'GET /analyze/logs/targets',
-        'GET /analyze/logs/status',
-        'GET /analyze/logs/metadata',
-        'POST /analyze/logs',
-        'POST /analyze/logs/incremental',
-        'POST /analyze/logs/batch'
-      ],
-      limits: {
-        maxHours: getLogCollectorLimits().maxHours,
-        maxLinesRequest: ANALYZE_MAX_LINES_REQUEST,
-        maxLinesEffectiveCap: getLogCollectorLimits().maxLinesCap,
-        batchConcurrencyMin: BATCH_CONCURRENCY_MIN,
-        batchConcurrencyMax: BATCH_CONCURRENCY_MAX
-      },
-      targets: {
-        count: getAllowedLogFileTargets().length,
-        items: getAllowedLogFileTargets()
-      },
-      llm: getOllamaRuntimeMetadata()
-    });
+    const status = buildLogExplainerStatus()
 
     res.status(200).json({
       name: 'blackice-log-explainer',
       version: 1,
       description: 'Read-only log analysis service for OpenClaw integration',
-      endpoints: {
-        targets: {
-          method: 'GET',
-          path: '/analyze/logs/targets',
-          responseSchema: LogExplainerJsonSchemas.analyzeLogsTargetsResponse
-        },
-        analyze: {
-          method: 'POST',
-          path: '/analyze/logs',
-          requestSchema: {
-            source: 'journalctl | docker | file',
-            target: 'string',
-            hours: 'number',
-            maxLines: 'number'
-          },
-          responseSchema: LogExplainerJsonSchemas.analyzeLogsResponse
-        },
-        incremental: {
-          method: 'POST',
-          path: '/analyze/logs/incremental',
-          requestSchema: {
-            source: 'file',
-            target: 'string',
-            cursor: 'number (optional)',
-            hours: 'number (optional)',
-            maxLines: 'number (optional)'
-          },
-          responseSchema: LogExplainerJsonSchemas.analyzeLogsIncrementalResponse
-        },
-        batch: {
-          method: 'POST',
-          path: '/analyze/logs/batch',
-          requestSchema: {
-            source: 'file',
-            targets: 'string[] (optional)',
-            hours: 'number (optional)',
-            maxLines: 'number (optional)',
-            concurrency: 'number (optional)'
-          },
-          responseSchema: LogExplainerJsonSchemas.analyzeLogsBatchResponse
-        },
-        status: {
-          method: 'GET',
-          path: '/analyze/logs/status'
-        }
-      },
+      endpoints: buildMetadataEndpoints(),
       status,
-      schemas: LogExplainerJsonSchemas
-    });
-  });
-
-  app.post('/analyze/logs/incremental', async (req: Request, res: Response) => {
-    try {
-      const parsed = AnalyzeLogsIncrementalRequestSchema.safeParse(req.body);
-
-      if (!parsed.success) {
-        res.status(400).json({
-          error: 'Invalid request body',
-          details: parsed.error.issues
-        });
-        return;
-      }
-
-      const body = parsed.data;
-      const collected = await collectFileLogsIncremental({
-        target: body.target,
-        cursor: body.cursor,
-        maxLines: body.maxLines
-      });
-
-      if (!collected.logs.trim()) {
-        const noLogsOut: AnalyzeLogsIncrementalResponse = {
-          source: 'file',
-          target: body.target,
-          cursor: body.cursor,
-          fromCursor: collected.fromCursor,
-          nextCursor: collected.nextCursor,
-          rotated: collected.rotated,
-          truncatedByBytes: collected.truncatedByBytes,
-          noNewLogs: true
-        };
-        res.status(200).json(AnalyzeLogsIncrementalResponseSchema.parse(noLogsOut));
-        return;
-      }
-
-      const analyzed = await analyzeFromRawLogs(
-        {
-          source: 'file',
-          target: body.target,
-          hours: body.hours,
-          maxLines: body.maxLines
-        },
-        collected.logs
-      );
-
-      const bodyOut: AnalyzeLogsIncrementalResponse = {
-        source: 'file',
-        target: body.target,
-        cursor: body.cursor,
-        fromCursor: collected.fromCursor,
-        nextCursor: collected.nextCursor,
-        rotated: collected.rotated,
-        truncatedByBytes: collected.truncatedByBytes,
-        noNewLogs: false,
-        ...analyzed
-      };
-      res.status(200).json(AnalyzeLogsIncrementalResponseSchema.parse(bodyOut));
-    } catch (error: unknown) {
-      const status = errStatus(error);
-      const message = errMessage(error);
-
-      log.error('log_explainer_incremental_failed', { status, message });
-      res.status(status).json({ error: message });
-    }
-  });
+      schemas: LogExplainerJsonSchemas,
+    })
+  })
 
   app.post('/analyze/logs/batch', async (req: Request, res: Response) => {
     try {
-      const parsed = AnalyzeLogsBatchRequestSchema.safeParse(req.body);
-
-      if (!parsed.success) {
-        res.status(400).json({
-          error: 'Invalid request body',
-          details: parsed.error.issues
-        });
-        return;
+      const requestId = getRequestId(res)
+      const safetyIdentifier = resolveSafetyIdentifier({
+        request: req,
+        explicitUser: undefined,
+        requestId,
+      })
+      const body = parseBodyOrRespond(AnalyzeLogsBatchRequestSchema, req.body, res)
+      if (!body) {
+        return
       }
 
-      const body = parsed.data;
-      const allowedTargets = getAllowedLogFileTargets();
-      const allowedSet = new Set(allowedTargets);
-      const candidateTargets = body.targets && body.targets.length > 0 ? body.targets : allowedTargets;
-      const targets = candidateTargets.filter((target) => allowedSet.has(target));
+      const source = body.source
+      const modeInfo = resolveBatchMode({
+        mode: body.mode,
+        analyze: body.analyze,
+        collectOnly: body.collectOnly,
+      })
+      const mode = modeInfo.mode
 
-      if (targets.length === 0) {
+      if (source === 'loki') {
+        if (typeof body.query === 'string' && body.query.trim().length > 0) {
+          res.status(403).json({
+            error: 'Raw Loki query is not allowed',
+            details: 'Use filters so BlackIce can construct a validated selector internally',
+          })
+          return
+        }
+
+        if (
+          (body.selectors && body.selectors.length > 0) ||
+          (body.targets && body.targets.length > 0)
+        ) {
+          res.status(403).json({
+            error: 'Direct Loki selectors are not allowed',
+            details: 'Use source=loki with filters instead of selectors[] or loki:{...} targets',
+          })
+          return
+        }
+
+        if (!body.filters) {
+          res.status(400).json({
+            error: 'Missing Loki filters',
+            details: 'Provide filters for source=loki',
+          })
+          return
+        }
+
+        const lokiRequest = {
+          source: 'loki' as const,
+          filters: body.filters,
+          contains: body.contains,
+          regex: body.regex,
+          start: body.start,
+          end: body.end,
+          sinceSeconds: body.sinceSeconds,
+          limit: body.limit,
+          allowUnscoped: body.allowUnscoped,
+        }
+        let fallbackTarget = 'loki'
+        let result: AnalyzeLogsBatchResultOk | AnalyzeLogsBatchResultError
+        try {
+          const collected = await collectLokiBatchLogs(lokiRequest)
+          fallbackTarget = collected.query
+          const evidence = buildEvidence(
+            collected.logs,
+            resolveEvidenceLinesForMode(mode, body.evidenceLines)
+          )
+
+          if (mode === 'raw') {
+            result = {
+              target: collected.query,
+              ok: true,
+              ...(modeInfo.legacyCollectOnly ? { logs: collected.logs } : {}),
+              evidence,
+              message: collected.logs.trim()
+                ? 'Logs collected (raw mode)'
+                : 'No logs collected (raw mode)',
+            }
+          } else if (mode === 'both') {
+            const analysisRequest: AnalyzePromptRequest = {
+              source: 'loki',
+              target: collected.query,
+              hours: collected.hours,
+              maxLines: collected.limit,
+              analyze: body.analyze,
+              collectOnly: body.collectOnly,
+            }
+            const analysisResult = await analyzeFromRawLogs(analysisRequest, collected.logs, {
+              requestId,
+              safetyIdentifier,
+            })
+            result = {
+              target: collected.query,
+              ok: true,
+              evidence,
+              ...analysisResult,
+            }
+          } else {
+            const analysisRequest: AnalyzePromptRequest = {
+              source: 'loki',
+              target: collected.query,
+              hours: collected.hours,
+              maxLines: collected.limit,
+              analyze: body.analyze,
+              collectOnly: body.collectOnly,
+            }
+            const analysisResult = await analyzeFromRawLogs(analysisRequest, collected.logs, {
+              requestId,
+              safetyIdentifier,
+            })
+            result = {
+              target: collected.query,
+              ok: true,
+              ...analysisResult,
+            }
+          }
+        } catch (error: unknown) {
+          const httpError = toHttpError(error)
+          result = {
+            target: fallbackTarget,
+            ok: false,
+            error: httpError.message,
+            status: httpError.status,
+          }
+        }
+
+        const bodyOut = AnalyzeLogsBatchResponseSchema.parse({
+          source: 'loki',
+          requestedTargets: 1,
+          analyzedTargets: 1,
+          ok: result.ok ? 1 : 0,
+          failed: result.ok ? 0 : 1,
+          results: [result],
+        })
+        res.status(200).json(bodyOut)
+        return
+      }
+
+      let candidateTargets: string[]
+      let targets: string[]
+
+      if (source === 'journald') {
+        candidateTargets = body.targets && body.targets.length > 0 ? body.targets : ['all']
+        targets = candidateTargets
+      } else {
         res.status(400).json({
-          error: 'No valid targets to analyze',
-          details: 'Provide targets listed in GET /analyze/logs/targets'
-        });
-        return;
+          error: `Unsupported source: ${source}`,
+        })
+        return
       }
 
       const results = await runConcurrent(targets, body.concurrency, async (target) => {
-        const request: AnalyzeLogsRequest = {
-          source: 'file',
+        const analysisRequest: AnalyzePromptRequest = {
+          source: source === 'journald' ? 'journalctl' : source,
           target,
           hours: body.hours,
-          maxLines: body.maxLines
-        };
+          maxLines: body.maxLines,
+          analyze: body.analyze,
+          collectOnly: body.collectOnly,
+        }
+
+        const collectorRequest: AnalyzeLogsRequest = {
+          ...analysisRequest,
+          source: 'journalctl',
+        }
 
         try {
-          const analyzed = await analyzeOneRequest(request);
-          const okResult: AnalyzeLogsBatchResultOk = {
+          const rawLogs = await collectLogs(collectorRequest)
+          const evidence = buildEvidence(
+            rawLogs,
+            resolveEvidenceLinesForMode(mode, body.evidenceLines)
+          )
+
+          if (mode === 'raw') {
+            return {
+              target,
+              ok: true,
+              ...(modeInfo.legacyCollectOnly ? { logs: rawLogs } : {}),
+              evidence,
+              message: rawLogs.trim()
+                ? 'Logs collected (raw mode)'
+                : 'No logs collected (raw mode)',
+            }
+          }
+
+          const analysisResult = await analyzeFromRawLogs(analysisRequest, rawLogs, {
+            requestId,
+            safetyIdentifier,
+          })
+
+          if ('no_logs' in analysisResult && analysisResult.no_logs) {
+            return {
+              target,
+              ok: true,
+              no_logs: true,
+              ...(mode === 'both' ? { evidence } : {}),
+              message: analysisResult.message,
+            }
+          }
+
+          if (mode === 'both') {
+            return {
+              target,
+              ok: true,
+              evidence,
+              ...analysisResult,
+            } as AnalyzeLogsBatchResultOk
+          }
+
+          return {
             target,
             ok: true,
-            ...analyzed
-          };
-          return okResult;
+            ...analysisResult,
+          } as AnalyzeLogsBatchResultOk
         } catch (error: unknown) {
+          const httpError = toHttpError(error)
           const errorResult: AnalyzeLogsBatchResultError = {
             target,
             ok: false,
-            error: errMessage(error),
-            status: errStatus(error)
-          };
-          return errorResult;
+            error: httpError.message,
+            status: httpError.status,
+          }
+          return errorResult
         }
-      });
+      })
 
-      const ok = results.filter((r) => r.ok).length;
-      const failed = results.length - ok;
+      const ok = results.filter((r) => r.ok).length
+      const failed = results.length - ok
 
       const bodyOut = AnalyzeLogsBatchResponseSchema.parse({
-        source: 'file',
+        source,
         requestedTargets: candidateTargets.length,
         analyzedTargets: results.length,
         ok,
         failed,
-        results
-      });
-      res.status(200).json(bodyOut);
+        results,
+      })
+      res.status(200).json(bodyOut)
     } catch (error: unknown) {
-      const status = errStatus(error);
-      const message = errMessage(error);
-
-      log.error('log_explainer_batch_failed', { status, message });
-      res.status(status).json({ error: message });
+      const httpError = toHttpError(error)
+      log.error('log_explainer_batch_failed', {
+        request_id: getRequestId(res),
+        status: httpError.status,
+        message: httpError.message,
+      })
+      res.status(httpError.status).json({ error: httpError.message })
     }
-  });
+  })
 
   app.post('/analyze/logs', async (req: Request, res: Response) => {
     try {
-      const parsed = AnalyzeLogsRequestSchema.safeParse(req.body);
-
-      if (!parsed.success) {
-        res.status(400).json({
-          error: 'Invalid request body',
-          details: parsed.error.issues
-        });
-        return;
+      const requestId = getRequestId(res)
+      const safetyIdentifier = resolveSafetyIdentifier({
+        request: req,
+        explicitUser: undefined,
+        requestId,
+      })
+      const body = parseBodyOrRespond(AnalyzeLogsRequestSchema, req.body, res)
+      if (!body) {
+        return
       }
 
-      const analyzed = AnalyzeLogsResponseSchema.parse(await analyzeOneRequest(parsed.data));
-      res.status(200).json(analyzed);
+      const analyzed = await analyzeOneRequest(body, {
+        requestId,
+        safetyIdentifier,
+      })
+      res.status(200).json(AnalyzeLogsResponseSchema.parse(analyzed))
     } catch (error: unknown) {
-      const status = errStatus(error);
-      const message = errMessage(error);
-
-      log.error('log_explainer_failed', { status, message });
-      res.status(status).json({ error: message });
+      const httpError = toHttpError(error)
+      log.error('log_explainer_failed', {
+        request_id: getRequestId(res),
+        status: httpError.status,
+        message: httpError.message,
+      })
+      res.status(httpError.status).json({ error: httpError.message })
     }
-  });
+  })
 }
