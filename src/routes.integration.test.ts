@@ -1,5 +1,5 @@
 import request from 'supertest'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('./actions.js', () => ({
   executeAction: vi.fn(async () => ({ action: 'healthcheck', text: 'ok-healthcheck' })),
@@ -8,6 +8,10 @@ vi.mock('./actions.js', () => ({
 describe('integration routes', () => {
   beforeEach(() => {
     vi.resetModules()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
 

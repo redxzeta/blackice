@@ -24,11 +24,26 @@ const booleanFlagSchema = z.preprocess((value) => {
   return value
 }, z.boolean())
 
+function boundedIntSchema(min: number, max: number, fallback: number) {
+  return z.preprocess((value) => {
+    if (value === undefined || value === null || String(value).trim() === '') {
+      return undefined
+    }
+
+    const parsed = Number.parseInt(String(value), 10)
+    if (!Number.isFinite(parsed)) {
+      return value
+    }
+
+    return Math.max(min, Math.min(max, parsed))
+  }, z.number().int().min(min).max(max).default(fallback))
+}
+
 const envSchema = z.object({
   PORT: z.coerce.number().int().default(3000),
   DEBATE_MAX_CONCURRENT: z.coerce.number().int().min(1).max(100).default(1),
   MODEL_PREFLIGHT_ON_START: booleanFlagSchema.default(false),
-  MODEL_PREFLIGHT_TIMEOUT_MS: z.coerce.number().int().min(200).max(10_000).default(2000),
+  MODEL_PREFLIGHT_TIMEOUT_MS: boundedIntSchema(200, 10_000, 2000),
 
   LOG_LEVEL: z.enum(['debug', 'info']).default('info'),
   LOG_BUFFER_MAX_ENTRIES: z.coerce.number().int().min(100).max(10_000).default(2000),
