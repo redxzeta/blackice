@@ -60,6 +60,7 @@ pnpm run dev
 ## Endpoints
 - `POST /v1/chat/completions`
 - `POST /v1/debate`
+- `GET /v1/debate/schema`
 - `POST /analyze/logs`
 - `POST /v1/policy/dry-run`
 - `GET /logs/recent` *(requires `OPS_ENABLED=1`)*
@@ -254,6 +255,31 @@ curl -sS -i http://127.0.0.1:3000/v1/debate \
     "turnsPerRound": 4,
     "includeModeratorSummary": true
   }'
+```
+
+Debate schema route:
+```bash
+curl -sS http://127.0.0.1:3000/v1/debate/schema
+```
+
+Example response shape:
+```json
+{
+  "type": "object",
+  "description": "Input contract for POST /v1/debate",
+  "required": ["topic", "modelA", "modelB"],
+  "properties": {
+    "topic": { "type": "string", "minLength": 3, "maxLength": 500 },
+    "modelA": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "modelB": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "rounds": { "type": "integer", "minimum": 1, "maximum": 3, "default": 3 },
+    "turnsPerRound": { "type": "integer", "minimum": 4, "maximum": 10, "default": 4 }
+  },
+  "notes": [
+    "Winner is always decided by OpenClaw policy.",
+    "Models must be present in DEBATE_MODEL_ALLOWLIST."
+  ]
+}
 ```
 
 Log Explainer route:
