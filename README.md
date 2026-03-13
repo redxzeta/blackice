@@ -102,6 +102,14 @@ Security controls:
 - path allowlist enforcement for logs
 
 ## Environment Variables
+- `LOG_COLLECTION_TIMEOUT_MS` (default `10000`; timeout in milliseconds for log collection commands)
+- `MAX_COMMAND_BYTES` (default `65536`; maximum allowed command output size in bytes)
+- `MAX_FILE_BYTES` (default `1048576`; maximum log file size processed by the collector)
+- `MAX_HOURS` (default `24`; maximum time window in hours for log collection)
+- `MAX_LINES_CAP` (default `5000`; maximum number of log lines returned)
+- `OLLAMA_TIMEOUT_MS` (default `30000`; timeout in milliseconds for Ollama requests)
+- `OLLAMA_RETRY_ATTEMPTS` (default `3`; number of retry attempts for failed Ollama requests)
+- `OLLAMA_RETRY_BACKOFF_MS` (default `1000`; delay between retry attempts in milliseconds)
 - `OLLAMA_BASE_URL` (default: `http://localhost:11434`)
 - `OLLAMA_MODEL` (default: `qwen2.5:14b`)
 - `PORT` (default: `3000`)
