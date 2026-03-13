@@ -133,6 +133,17 @@ export const AnalyzeLogsBatchRequestSchema = z
 export const AnalyzeLogsTargetsResponseSchema = z
   .object({
     targets: z.array(z.string()),
+    discovery: z
+      .object({
+        job: z.string().optional(),
+        allowedLabels: z.array(z.string()),
+        hosts: z.array(z.string()),
+        units: z.array(z.string()),
+        hasHostsRegex: z.boolean(),
+        hasUnitsRegex: z.boolean(),
+        requireScopeLabels: z.boolean(),
+      })
+      .strict(),
   })
   .strict()
 
@@ -259,11 +270,32 @@ export type AnalyzeLogsStatusResponse = z.infer<typeof AnalyzeLogsStatusResponse
 export const LogExplainerJsonSchemas = {
   analyzeLogsTargetsResponse: {
     type: 'object',
-    required: ['targets'],
+    required: ['targets', 'discovery'],
     properties: {
       targets: {
         type: 'array',
         items: { type: 'string' },
+      },
+      discovery: {
+        type: 'object',
+        required: [
+          'allowedLabels',
+          'hosts',
+          'units',
+          'hasHostsRegex',
+          'hasUnitsRegex',
+          'requireScopeLabels',
+        ],
+        properties: {
+          job: { type: 'string' },
+          allowedLabels: { type: 'array', items: { type: 'string' } },
+          hosts: { type: 'array', items: { type: 'string' } },
+          units: { type: 'array', items: { type: 'string' } },
+          hasHostsRegex: { type: 'boolean' },
+          hasUnitsRegex: { type: 'boolean' },
+          requireScopeLabels: { type: 'boolean' },
+        },
+        additionalProperties: false,
       },
     },
     additionalProperties: false,
