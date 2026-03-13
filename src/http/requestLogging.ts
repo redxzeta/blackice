@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { NextFunction, Request, Response } from 'express'
 import { log } from '../log.js'
+import { beginHttpRequest, endHttpRequest, recordHttpRequest } from './metrics.js'
 
 const REQUEST_ID_HEADER = 'x-request-id'
 const REQUEST_ID_MAX_LEN = 128
@@ -56,7 +57,10 @@ export function getRequestId(res: Response): string {
 export function requestLoggingMiddleware(req: Request, res: Response, next: NextFunction): void {
   const startedAt = process.hrtime.bigint()
   const requestId = normalizeRequestId(parseRequestIdHeader(req)) ?? randomUUID()
+  const requestRoute = req.path
   let logged = false
+
+  beginHttpRequest(requestRoute)
 
   res.locals.requestId = requestId
   res.setHeader(REQUEST_ID_HEADER, requestId)
@@ -68,16 +72,20 @@ export function requestLoggingMiddleware(req: Request, res: Response, next: Next
     logged = true
 
     const latencyMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000
-
     const status = completed ? res.statusCode : 499
+    const route = formatRoute(req)
+    const normalizedLatencyMs = Number(latencyMs.toFixed(3))
+
+    endHttpRequest(requestRoute)
+    recordHttpRequest(route, req.method, status, normalizedLatencyMs)
 
     log.info('http_request', {
       request_id: requestId,
       method: req.method,
       path: req.path,
-      route: formatRoute(req),
+      route,
       status,
-      latency_ms: Number(latencyMs.toFixed(3)),
+      latency_ms: normalizedLatencyMs,
       timestamp: new Date().toISOString(),
       completed,
     })

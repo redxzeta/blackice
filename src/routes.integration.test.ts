@@ -12,6 +12,7 @@ describe('integration routes', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
     vi.restoreAllMocks()
   })
 
@@ -155,6 +156,25 @@ describe('integration routes', () => {
       available: false,
       error: 'model_not_found',
     })
+  })
+
+  it('GET /metrics exposes Prometheus text when enabled', async () => {
+    vi.stubEnv('METRICS_ENABLED', '1')
+    vi.stubEnv('METRICS_EXPOSE_PATH', '/metrics')
+
+    const { createApp } = await import('./app.js')
+    const app = createApp(1)
+
+    const metricsRes = await request(app).get('/metrics')
+    expect(metricsRes.status).toBe(200)
+    expect(metricsRes.headers['content-type']).toContain('text/plain')
+    expect(metricsRes.text).toContain('# TYPE blackice_http_requests_total counter')
+
+    const healthRes = await request(app).get('/healthz')
+    expect(healthRes.status).toBe(200)
+
+    const metricsAfterTraffic = await request(app).get('/metrics')
+    expect(metricsAfterTraffic.text).toContain('blackice_http_requests_total{route="/healthz",method="GET",status="200"} 1')
   })
 
   it('GET /v1/models/check returns 504 when the upstream probe times out', async () => {

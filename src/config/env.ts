@@ -47,6 +47,9 @@ const envSchema = z.object({
 
   LOG_LEVEL: z.enum(['debug', 'info']).default('info'),
   LOG_BUFFER_MAX_ENTRIES: z.coerce.number().int().min(100).max(10_000).default(2000),
+  OPS_ENABLED: booleanFlagSchema.default(false),
+  METRICS_ENABLED: booleanFlagSchema.default(true),
+  METRICS_EXPOSE_PATH: z.string().trim().min(1).default('/metrics'),
 })
 
 export type Env = z.infer<typeof envSchema>
