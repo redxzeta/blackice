@@ -1,5 +1,23 @@
 version: 1
 
+server:
+  port: 3000
+
+readiness:
+  timeoutMs: 1500
+  strict: true
+
+ops:
+  enabled: false
+  logBufferMaxEntries: 2000
+
+debate:
+  maxConcurrent: 1
+  modelAllowlist:
+    - "llama3.1:8b"
+    - "qwen2.5:14b"
+    - "qwen2.5-coder:14b"
+
 ollama:
   baseUrl: "http://127.0.0.1:11434"
   model: "qwen2.5:14b"
