@@ -1,37 +1,11 @@
+import { getRuntimeConfig } from './config/runtimeConfig.js'
 import { ollamaBaseURL } from './ollama.js'
 
-const DEFAULT_TIMEOUT_MS = 1500
-const MIN_TIMEOUT_MS = 100
-const MAX_TIMEOUT_MS = 10000
+const runtimeConfig = getRuntimeConfig()
 
-function parseBoundedInt(
-  raw: string | undefined,
-  fallback: number,
-  min: number,
-  max: number
-): number {
-  const parsed = Number.parseInt(String(raw ?? fallback), 10)
-  if (!Number.isFinite(parsed)) {
-    return fallback
-  }
-  return Math.max(min, Math.min(max, parsed))
-}
+export const readinessTimeoutMs = runtimeConfig.readiness.timeoutMs
 
-function parseStrictMode(raw: string | undefined): boolean {
-  const value = String(raw ?? '1')
-    .trim()
-    .toLowerCase()
-  return !(value === '0' || value === 'false' || value === 'no')
-}
-
-export const readinessTimeoutMs = parseBoundedInt(
-  process.env.READINESS_TIMEOUT_MS,
-  DEFAULT_TIMEOUT_MS,
-  MIN_TIMEOUT_MS,
-  MAX_TIMEOUT_MS
-)
-
-export const readinessStrict = parseStrictMode(process.env.READINESS_STRICT)
+export const readinessStrict = runtimeConfig.readiness.strict
 
 export type ReadinessCheckResult = {
   ok: boolean

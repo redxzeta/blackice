@@ -1,9 +1,10 @@
 import type { Express, Request, Response } from 'express'
+import { getRuntimeConfig } from '../config/runtimeConfig.js'
 import { getLogMetrics, getRecentLogs } from '../log.js'
 import type { VersionInfo } from '../version.js'
 
 export function registerOpsRoutes(app: Express, versionInfo: VersionInfo): void {
-  const opsEnabled = process.env.OPS_ENABLED === '1'
+  const opsEnabled = getRuntimeConfig().ops.enabled
 
   app.get('/healthz', (_req: Request, res: Response) => {
     res.status(200).json({ ok: true })
