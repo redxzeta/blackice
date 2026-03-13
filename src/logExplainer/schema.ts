@@ -235,6 +235,30 @@ export const AnalyzeLogsStatusResponseSchema = z
   })
   .strict()
 
+const LogExplainerMetadataEndpointSchema = z
+  .object({
+    method: z.enum(['GET', 'POST']),
+    path: z.string(),
+    requestSchema: z.record(z.string(), z.string()).optional(),
+    responseSchema: z.unknown().optional(),
+  })
+  .strict()
+
+export const AnalyzeLogsMetadataResponseSchema = z
+  .object({
+    name: z.literal('blackice-log-explainer'),
+    version: z.literal(1),
+    description: z.literal('Read-only log analysis service for OpenClaw integration'),
+    endpoints: z.record(z.string(), LogExplainerMetadataEndpointSchema),
+    status: AnalyzeLogsStatusResponseSchema,
+    schemas: z.object({
+      analyzeLogsTargetsResponse: z.unknown(),
+      analyzeLogsResponse: z.unknown(),
+      analyzeLogsBatchResponse: z.unknown(),
+    }),
+  })
+  .strict()
+
 export type AnalyzeLogsRequest = z.infer<typeof AnalyzeLogsRequestSchema>
 export type AnalyzeLogsBatchRequest = z.infer<typeof AnalyzeLogsBatchRequestSchema>
 export type AnalyzeLogsBatchLokiRequest = {
@@ -255,6 +279,7 @@ export type AnalyzeLogsBatchResultOk = z.infer<typeof AnalyzeLogsBatchResultOkSc
 export type AnalyzeLogsBatchResultError = z.infer<typeof AnalyzeLogsBatchResultErrorSchema>
 export type AnalyzeLogsBatchResponse = z.infer<typeof AnalyzeLogsBatchResponseSchema>
 export type AnalyzeLogsStatusResponse = z.infer<typeof AnalyzeLogsStatusResponseSchema>
+export type AnalyzeLogsMetadataResponse = z.infer<typeof AnalyzeLogsMetadataResponseSchema>
 
 export const LogExplainerJsonSchemas = {
   analyzeLogsTargetsResponse: {
