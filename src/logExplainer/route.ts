@@ -5,6 +5,7 @@ import {
   BATCH_EVIDENCE_LINES_MAX,
   AnalyzeLogsBatchRequestSchema,
   AnalyzeLogsBatchResponseSchema,
+  AnalyzeLogsMetadataResponseSchema,
   AnalyzeLogsRequestSchema,
   AnalyzeLogsResponseSchema,
   AnalyzeLogsTargetsResponseSchema,
@@ -348,8 +349,7 @@ export function registerLogExplainerRoutes(app: Express): void {
 
   app.get('/analyze/logs/metadata', (_req: Request, res: Response) => {
     const status = buildLogExplainerStatus()
-
-    res.status(200).json({
+    const body = AnalyzeLogsMetadataResponseSchema.parse({
       name: 'blackice-log-explainer',
       version: 1,
       description: 'Read-only log analysis service for OpenClaw integration',
@@ -357,6 +357,8 @@ export function registerLogExplainerRoutes(app: Express): void {
       status,
       schemas: LogExplainerJsonSchemas,
     })
+
+    res.status(200).json(body)
   })
 
   app.post('/analyze/logs/batch', async (req: Request, res: Response) => {
