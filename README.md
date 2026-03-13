@@ -107,6 +107,8 @@ Security controls:
 - `OLLAMA_MODEL` (default: `qwen2.5:14b`)
 - `PORT` (default: `3000`)
 - `BLACKICE_CONFIG_FILE` (default: `./config/blackice.local.yaml`; use `./config/blackice.e2e.yaml` or `./config/blackice.prod.yaml`)
+- `API_TOKEN` (optional; when set, all non exempt API routes require `Authorization: Bearer <token>`)
+- `AUTH_EXEMPT_PATHS` (optional CSV; defaults to `/healthz,/readyz,/version`)
 - `ACTIONS_ENABLED` (`true`/`false`, default `true`)
 - `LOG_LEVEL` (`info`/`debug`, default `info`)
 - `ALLOWLIST_LOG_PATHS` (comma-separated absolute files or directories)
@@ -177,6 +179,19 @@ pnpm run test:watch
 ```
 
 ## Quick Tests
+Optional bearer token auth:
+```bash
+API_TOKEN=supersecret AUTH_EXEMPT_PATHS=/healthz,/readyz,/version pnpm start
+
+curl -sS http://127.0.0.1:3000/v1/chat/completions \
+  -H 'Authorization: Bearer supersecret' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "router/default",
+    "messages": [{"role":"user","content":"hi"}]
+  }'
+```
+
 Streaming CHAT:
 ```bash
 curl -N -sS http://127.0.0.1:3000/v1/chat/completions \
