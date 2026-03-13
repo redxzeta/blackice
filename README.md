@@ -106,6 +106,15 @@ Security controls:
 - `OLLAMA_MODEL` (default: `qwen2.5:14b`)
 - `PORT` (default: `3000`)
 - `BLACKICE_CONFIG_FILE` (default: `./config/blackice.local.yaml`; use `./config/blackice.e2e.yaml` or `./config/blackice.prod.yaml`)
+  - The selected YAML file also carries the runtime log collection and Ollama retry knobs:
+  - `limits.logCollectionTimeoutMs` (default `15000`; timeout for log collection commands and Loki requests)
+  - `limits.maxCommandBytes` (default `2000000`; cap for collected command output bytes)
+  - `limits.maxQueryHours` (default `168`; max log query lookback window)
+  - `limits.maxLinesCap` (default `2000`; cap for collected log lines)
+  - `limits.maxConcurrency` (default `5`; max allowed batch concurrency)
+  - `ollama.timeoutMs` (default `45000`; timeout for Ollama generate requests)
+  - `ollama.retryAttempts` (default `2`; number of Ollama retry attempts after the initial request fails)
+  - `ollama.retryBackoffMs` (default `1000`; base retry backoff in ms for Ollama retries)
 - `ACTIONS_ENABLED` (`true`/`false`, default `true`)
 - `LOG_LEVEL` (`info`/`debug`, default `info`)
 - `ALLOWLIST_LOG_PATHS` (comma-separated absolute files or directories)
@@ -117,9 +126,6 @@ Security controls:
 - `LOKI_MAX_LINES_CAP` (default `2000`; cap for Loki query mode `limit`)
 - `LOKI_MAX_RESPONSE_BYTES` (default `2000000`; cap for Loki lines payload in query mode)
 - `LOKI_REQUIRE_SCOPE_LABELS` (default `true`; requires `host` or `unit` in query mode unless `allowUnscoped=true`)
-- `MAX_QUERY_HOURS` (max log query lookback window)
-- `MAX_LINES` (effective cap for collected lines)
-- `MAX_CONCURRENCY` (max allowed batch concurrency)
 - `DEBATE_MODEL_ALLOWLIST` (comma-separated model IDs allowed for `/v1/debate`)
 - `DEBATE_MAX_CONCURRENT` (default `1`; max active `/v1/debate` requests)
 - `LOG_BUFFER_MAX_ENTRIES` (default `2000`; in-memory API log buffer size for `/logs/*`)
@@ -322,6 +328,21 @@ API metrics (last 1 hour):
 ```bash
 curl -sS "http://127.0.0.1:3000/logs/metrics?window=1h"
 ```
+
+The `/logs/metrics` `window` query accepts `<number><unit>` where the unit is one of:
+- `s` for seconds
+- `m` for minutes
+- `h` for hours
+- `d` for days
+
+Examples:
+```bash
+curl -sS "http://127.0.0.1:3000/logs/metrics?window=30m"
+curl -sS "http://127.0.0.1:3000/logs/metrics?window=1h"
+curl -sS "http://127.0.0.1:3000/logs/metrics?window=1d"
+```
+
+If `window` is omitted or invalid, the endpoint falls back to the default 1 hour window.
 
 Readiness check:
 
