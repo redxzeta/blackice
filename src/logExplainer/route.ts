@@ -57,6 +57,22 @@ type EvidenceLine = {
 const ISO_OR_SHORT_TS_PREFIX = /^(\d{4}-\d{2}-\d{2}[ T][^\s]+)\s+(.*)$/
 const LOKI_NS_TS_PREFIX = /^(\d{16,20})\s+(.*)$/
 const MAX_EVIDENCE_LINE_CHARS = 2_000
+const RATE_LIMIT_RESPONSE_TYPE = 'rate_limit_exceeded'
+const RATE_LIMIT_POLICIES: Record<'analyze' | 'batch', RateLimitPolicy> = {
+  analyze: {
+    key: 'analyze',
+    path: '/analyze/logs',
+    maxRequests: 5,
+    windowMs: 60_000,
+  },
+  batch: {
+    key: 'batch',
+    path: '/analyze/logs/batch',
+    maxRequests: 2,
+    windowMs: 60_000,
+  },
+}
+const rateLimitBuckets = new Map<string, RateLimitBucket>()
 
 function clampEvidenceLine(line: string): string {
   if (line.length <= MAX_EVIDENCE_LINE_CHARS) {
@@ -142,9 +158,93 @@ function resolveEvidenceLinesForMode(
   return requested ?? BATCH_EVIDENCE_LINES_DEFAULT
 }
 
+function getRateLimitClientKey(req: Request): string {
+  const forwardedFor = req.header('x-forwarded-for')
+  if (typeof forwardedFor === 'string') {
+    const first = forwardedFor
+      .split(',')
+      .map((part) => part.trim())
+      .find((part) => part.length > 0)
+    if (first) {
+      return first
+    }
+  }
+
+  if (typeof req.ip === 'string' && req.ip.length > 0) {
+    return req.ip
+  }
+
+  return 'unknown'
+}
+
+function enforceLogAnalysisRateLimit(
+  req: Request,
+  res: Response,
+  policy: RateLimitPolicy
+): boolean {
+  const now = Date.now()
+  const clientKey = getRateLimitClientKey(req)
+  const bucketKey = `${policy.key}:${clientKey}`
+  const existing = rateLimitBuckets.get(bucketKey)
+  const windowStartedAt =
+    existing && now - existing.windowStartedAt < policy.windowMs ? existing.windowStartedAt : now
+  const hits =
+    existing && now - existing.windowStartedAt < policy.windowMs ? existing.hits + 1 : 1
+
+  rateLimitBuckets.set(bucketKey, {
+    windowStartedAt,
+    hits,
+  })
+
+  const retryAfterSeconds = Math.max(
+    1,
+    Math.ceil((windowStartedAt + policy.windowMs - now) / 1000)
+  )
+  const remaining = Math.max(0, policy.maxRequests - hits)
+
+  res.setHeader('Retry-After', String(retryAfterSeconds))
+  res.setHeader('X-RateLimit-Limit', String(policy.maxRequests))
+  res.setHeader('X-RateLimit-Remaining', String(remaining))
+  res.setHeader('X-RateLimit-Reset', String(windowStartedAt + policy.windowMs))
+
+  if (hits <= policy.maxRequests) {
+    return true
+  }
+
+  const requestId = getRequestId(res)
+  log.info('log_explainer_rate_limit_hit', {
+    request_id: requestId,
+    path: policy.path,
+    client: clientKey,
+    limit: policy.maxRequests,
+    window_ms: policy.windowMs,
+    retry_after_seconds: retryAfterSeconds,
+  })
+
+  res.status(429).json({
+    error: 'Rate limit exceeded',
+    type: RATE_LIMIT_RESPONSE_TYPE,
+    path: policy.path,
+    retryAfterSeconds,
+  })
+  return false
+}
+
 type AnalysisContext = {
   requestId?: string
   safetyIdentifier?: string
+}
+
+type RateLimitBucket = {
+  windowStartedAt: number
+  hits: number
+}
+
+type RateLimitPolicy = {
+  key: 'analyze' | 'batch'
+  path: '/analyze/logs' | '/analyze/logs/batch'
+  maxRequests: number
+  windowMs: number
 }
 
 type LogExplainerMetadataEndpoint = {
@@ -361,6 +461,10 @@ export function registerLogExplainerRoutes(app: Express): void {
 
   app.post('/analyze/logs/batch', async (req: Request, res: Response) => {
     try {
+      if (!enforceLogAnalysisRateLimit(req, res, RATE_LIMIT_POLICIES.batch)) {
+        return
+      }
+
       const requestId = getRequestId(res)
       const safetyIdentifier = resolveSafetyIdentifier({
         request: req,
@@ -612,6 +716,10 @@ export function registerLogExplainerRoutes(app: Express): void {
 
   app.post('/analyze/logs', async (req: Request, res: Response) => {
     try {
+      if (!enforceLogAnalysisRateLimit(req, res, RATE_LIMIT_POLICIES.analyze)) {
+        return
+      }
+
       const requestId = getRequestId(res)
       const safetyIdentifier = resolveSafetyIdentifier({
         request: req,
