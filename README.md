@@ -329,6 +329,21 @@ API metrics (last 1 hour):
 curl -sS "http://127.0.0.1:3000/logs/metrics?window=1h"
 ```
 
+The `/logs/metrics` `window` query accepts `<number><unit>` where the unit is one of:
+- `s` for seconds
+- `m` for minutes
+- `h` for hours
+- `d` for days
+
+Examples:
+```bash
+curl -sS "http://127.0.0.1:3000/logs/metrics?window=30m"
+curl -sS "http://127.0.0.1:3000/logs/metrics?window=1h"
+curl -sS "http://127.0.0.1:3000/logs/metrics?window=1d"
+```
+
+If `window` is omitted or invalid, the endpoint falls back to the default 1 hour window.
+
 Readiness check:
 
 
