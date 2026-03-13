@@ -21,10 +21,12 @@ describe('runWorkerText policy fallback', () => {
   beforeEach(() => {
     vi.resetModules()
     vi.clearAllMocks()
+    vi.unstubAllGlobals()
     process.env = { ...originalEnv }
   })
 
   afterEach(() => {
+    vi.unstubAllGlobals()
     process.env = { ...originalEnv }
   })
 
@@ -74,5 +76,43 @@ describe('runWorkerText policy fallback', () => {
     ).rejects.toThrow('network down')
 
     expect(mocks.generateText).toHaveBeenCalledTimes(1)
+  })
+
+  it('checks model availability against Ollama tags', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          models: [{ name: 'qwen2.5:14b' }, { model: 'llama3.1:8b' }],
+        }),
+      })
+    )
+
+    const { checkModelAvailability } = await import('./ollama.js')
+    const result = await checkModelAvailability('llama3.1:8b')
+
+    expect(result.ok).toBe(true)
+    expect(result.available).toBe(true)
+    expect(result.model).toBe('llama3.1:8b')
+    expect(result.baseUrl).toBe('http://192.168.1.230:11434/api')
+  })
+
+  it('maps fetch aborts to upstream timeout errors for availability checks', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockRejectedValue(
+        Object.assign(new Error('timed out'), {
+          name: 'AbortError',
+        })
+      )
+    )
+
+    const { checkModelAvailability } = await import('./ollama.js')
+
+    await expect(checkModelAvailability()).rejects.toMatchObject({
+      name: 'ModelAvailabilityCheckError',
+      code: 'upstream_timeout',
+    })
   })
 })

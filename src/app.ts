@@ -5,6 +5,7 @@ import { requestLoggingMiddleware } from './http/requestLogging.js'
 import { registerChatCompletionsRoute } from './routes/chatCompletions.js'
 import { registerPolicyRoutes } from './routes/policy.js'
 import { registerDebateRoutes } from './routes/debate.js'
+import { registerModelRoutes } from './routes/models.js'
 import { registerOpsRoutes } from './routes/ops.js'
 import { checkReadiness, readinessStrict, readinessTimeoutMs } from './readiness.js'
 
@@ -23,6 +24,7 @@ export function createApp(maxActiveDebates: number) {
   registerChatCompletionsRoute(app)
   registerPolicyRoutes(app)
   registerDebateRoutes(app, maxActiveDebates)
+  registerModelRoutes(app)
   registerOpsRoutes(app, versionInfo)
 
   app.get('/readyz', async (_req, res) => {
