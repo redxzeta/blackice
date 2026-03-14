@@ -72,6 +72,7 @@ pnpm run dev
 - `GET /v1/models/check`
 - `GET /health/loki`
 
+
 ## Envelope Contract
 Latest `user` message is interpreted as:
 
@@ -103,10 +104,20 @@ Security controls:
 - path allowlist enforcement for logs
 
 ## Environment Variables
+- `LOG_COLLECTION_TIMEOUT_MS` (default `10000`; timeout in milliseconds for log collection commands)
+- `MAX_COMMAND_BYTES` (default `65536`; maximum allowed command output size in bytes)
+- `MAX_FILE_BYTES` (default `1048576`; maximum log file size processed by the collector)
+- `MAX_HOURS` (default `24`; maximum time window in hours for log collection)
+- `MAX_LINES_CAP` (default `5000`; maximum number of log lines returned)
+- `OLLAMA_TIMEOUT_MS` (default `30000`; timeout in milliseconds for Ollama requests)
+- `OLLAMA_RETRY_ATTEMPTS` (default `3`; number of retry attempts for failed Ollama requests)
+- `OLLAMA_RETRY_BACKOFF_MS` (default `1000`; delay between retry attempts in milliseconds)
 - `OLLAMA_BASE_URL` (default: `http://localhost:11434`)
 - `OLLAMA_MODEL` (default: `qwen2.5:14b`)
 - `PORT` (default: `3000`)
 - `BLACKICE_CONFIG_FILE` (default: `./config/blackice.local.yaml`; use `./config/blackice.e2e.yaml` or `./config/blackice.prod.yaml`)
+- `API_TOKEN` (optional; when set, all non exempt API routes require `Authorization: Bearer <token>`)
+- `AUTH_EXEMPT_PATHS` (optional CSV; defaults to `/healthz,/readyz,/version`)
 - `ACTIONS_ENABLED` (`true`/`false`, default `true`)
 - `LOG_LEVEL` (`info`/`debug`, default `info`)
 - `ALLOWLIST_LOG_PATHS` (comma-separated absolute files or directories)
@@ -177,6 +188,19 @@ pnpm run test:watch
 ```
 
 ## Quick Tests
+Optional bearer token auth:
+```bash
+API_TOKEN=supersecret AUTH_EXEMPT_PATHS=/healthz,/readyz,/version pnpm start
+
+curl -sS http://127.0.0.1:3000/v1/chat/completions \
+  -H 'Authorization: Bearer supersecret' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "router/default",
+    "messages": [{"role":"user","content":"hi"}]
+  }'
+```
+
 Streaming CHAT:
 ```bash
 curl -N -sS http://127.0.0.1:3000/v1/chat/completions \
@@ -325,6 +349,27 @@ API metrics (last 1 hour):
 ```bash
 curl -sS "http://127.0.0.1:3000/logs/metrics?window=1h"
 ```
+### Metrics Window Parameter
+
+The `/logs/metrics` endpoint accepts a `window` parameter that defines the time range for metrics aggregation.
+
+Format:
+
+<number><unit>
+
+Supported units:
+- s = seconds
+- m = minutes
+- h = hours
+- d = days
+
+Examples:
+
+/logs/metrics?window=30m
+/logs/metrics?window=1h
+/logs/metrics?window=1d
+
+If an invalid value is provided, the system falls back to the default window of **1 hour**.
 
 Prometheus scrape endpoint:
 ```bash

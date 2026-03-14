@@ -27,6 +27,141 @@ describe('integration routes', () => {
     expect(res.headers['x-blackice-version']).toBeDefined()
   })
 
+  it('API auth stays disabled when API_TOKEN is unset', async () => {
+    const { createApp } = await import('./app.js')
+    const app = createApp(1)
+
+    const res = await request(app)
+      .post('/v1/chat/completions')
+      .send({
+        model: 'router/default',
+        messages: [
+          {
+            role: 'user',
+            content: '{"action":"healthcheck","input":"","options":{}}',
+          },
+        ],
+      })
+
+    expect(res.status).toBe(200)
+    expect(JSON.stringify(res.body)).toContain('ok-healthcheck')
+  })
+
+  it('API auth returns 401 when bearer token is missing', async () => {
+    vi.stubEnv('API_TOKEN', 'supersecret')
+
+    const { createApp } = await import('./app.js')
+    const app = createApp(1)
+
+    const res = await request(app)
+      .post('/v1/chat/completions')
+      .send({
+        model: 'router/default',
+        messages: [
+          {
+            role: 'user',
+            content: '{"action":"healthcheck","input":"","options":{}}',
+          },
+        ],
+      })
+
+    expect(res.status).toBe(401)
+    expect(res.body).toEqual({
+      error: {
+        message: 'Unauthorized',
+        type: 'authentication_error',
+      },
+    })
+  })
+
+  it('API auth returns 403 when bearer token is wrong', async () => {
+    vi.stubEnv('API_TOKEN', 'supersecret')
+
+    const { createApp } = await import('./app.js')
+    const app = createApp(1)
+
+    const res = await request(app)
+      .post('/v1/chat/completions')
+      .set('Authorization', 'Bearer wrongtoken')
+      .send({
+        model: 'router/default',
+        messages: [
+          {
+            role: 'user',
+            content: '{"action":"healthcheck","input":"","options":{}}',
+          },
+        ],
+      })
+
+    expect(res.status).toBe(403)
+    expect(res.body).toEqual({
+      error: {
+        message: 'Unauthorized',
+        type: 'authentication_error',
+      },
+    })
+  })
+
+  it('API auth allows exempt paths and honors AUTH_EXEMPT_PATHS', async () => {
+    vi.stubEnv('API_TOKEN', 'supersecret')
+    vi.stubEnv('AUTH_EXEMPT_PATHS', '/healthz,/v1/models/check')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          models: [{ name: 'qwen2.5:14b' }],
+        }),
+      })
+    )
+
+    const { createApp } = await import('./app.js')
+    const app = createApp(1)
+
+    const [healthRes, modelsRes] = await Promise.all([
+      request(app).get('/healthz'),
+      request(app).get('/v1/models/check'),
+    ])
+
+    expect(healthRes.status).toBe(200)
+    expect(modelsRes.status).toBe(200)
+  })
+
+  it('API auth treats exempt paths with trailing slashes as equivalent', async () => {
+    vi.stubEnv('API_TOKEN', 'supersecret')
+
+    const { createApp } = await import('./app.js')
+    const app = createApp(1)
+
+    const res = await request(app).get('/healthz/')
+
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({ ok: true })
+  })
+
+  it('API auth allows requests with the correct bearer token', async () => {
+    vi.stubEnv('API_TOKEN', 'supersecret')
+
+    const { createApp } = await import('./app.js')
+    const app = createApp(1)
+
+    const res = await request(app)
+      .post('/v1/chat/completions')
+      .set('Authorization', 'Bearer supersecret')
+      .send({
+        model: 'router/default',
+        messages: [
+          {
+            role: 'user',
+            content: '{"action":"healthcheck","input":"","options":{}}',
+          },
+        ],
+      })
+
+    expect(res.status).toBe(200)
+    expect(JSON.stringify(res.body)).toContain('ok-healthcheck')
+  })
+
   it('POST /v1/chat/completions supports action happy path', async () => {
     const { createApp } = await import('./app.js')
     const app = createApp(1)
