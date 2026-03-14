@@ -8,6 +8,8 @@ type CounterKey = RequestMetricKey & {
 }
 
 const HISTOGRAM_BUCKETS_MS = [5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000]
+export const HTTP_METRICS_PENDING_ROUTE = '/__pending__'
+export const HTTP_METRICS_UNMATCHED_ROUTE = '/__unmatched__'
 
 const requestCounters = new Map<string, number>()
 const durationSums = new Map<string, number>()
@@ -57,7 +59,12 @@ export function beginHttpRequest(route: string): void {
   inflightRequests.set(route, (inflightRequests.get(route) ?? 0) + 1)
 }
 
-export function recordHttpRequest(route: string, method: string, status: number, latencyMs: number): void {
+export function recordHttpRequest(
+  route: string,
+  method: string,
+  status: number,
+  latencyMs: number
+): void {
   const normalizedStatus = String(status)
   requestCounters.set(
     counterKey(route, method, normalizedStatus),
@@ -135,7 +142,9 @@ export function renderPrometheusMetrics(): string {
   ])
   const sortedRoutes = [...knownRoutes].sort((a, b) => a.localeCompare(b))
   for (const route of sortedRoutes) {
-    lines.push(`blackice_inflight_requests{route="${escapeLabelValue(route)}"} ${inflightRequests.get(route) ?? 0}`)
+    lines.push(
+      `blackice_inflight_requests{route="${escapeLabelValue(route)}"} ${inflightRequests.get(route) ?? 0}`
+    )
   }
 
   return `${lines.join('\n')}\n`
