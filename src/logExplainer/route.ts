@@ -29,6 +29,7 @@ import {
 } from './promptTemplates.js'
 import {
   ensureReadOnlyAnalysisOutput,
+  redactSecrets,
   sanitizeReadOnlyAnalysisOutput,
   sanitizeReadOnlyEvidenceLine,
 } from './outputSafety.js'
@@ -268,7 +269,15 @@ async function analyzeFromRawLogs(
     }
   }
 
-  const { text: logs, truncated } = truncateLogs(rawLogs)
+  const promptRedaction = redactSecrets(rawLogs)
+  if (promptRedaction.redacted) {
+    log.info('log_explainer_prompt_redacted', {
+      requestId: ctx.requestId,
+      reasons: promptRedaction.reasons,
+    })
+  }
+
+  const { text: logs, truncated } = truncateLogs(promptRedaction.text)
   const userPrompt = buildUserPrompt({ ...request, logs, truncated })
   const analysis = await analyzeLogsWithOllama({
     systemPrompt: SYSTEM_PROMPT,
@@ -278,20 +287,25 @@ async function analyzeFromRawLogs(
   })
 
   const safety = ensureReadOnlyAnalysisOutput(analysis)
-  if (!safety.safe) {
-    const sanitized = sanitizeReadOnlyAnalysisOutput(analysis)
+  const unsafeOutput = !safety.safe ? sanitizeReadOnlyAnalysisOutput(analysis) : null
+  const secretRedaction = redactSecrets(unsafeOutput?.analysis ?? analysis)
 
+  const redactedReasons = [...(unsafeOutput?.reasons ?? []), ...secretRedaction.reasons]
+  const redacted = Boolean(unsafeOutput?.redacted || secretRedaction.redacted)
+
+  if (redacted) {
     log.info('log_explainer_output_redacted', {
-      reason: safety.reason,
-      redacted: sanitized.redacted,
-      reasons: sanitized.reasons,
+      requestId: ctx.requestId,
+      reason: safety.safe ? undefined : safety.reason,
+      redacted,
+      reasons: redactedReasons,
     })
 
     return {
-      analysis: sanitized.analysis,
+      analysis: secretRedaction.text,
       safety: {
-        redacted: sanitized.redacted,
-        reasons: sanitized.reasons,
+        redacted,
+        reasons: redactedReasons,
       },
     }
   }
