@@ -127,6 +127,18 @@ describe('integration routes', () => {
     expect(modelsRes.status).toBe(200)
   })
 
+  it('API auth treats exempt paths with trailing slashes as equivalent', async () => {
+    vi.stubEnv('API_TOKEN', 'supersecret')
+
+    const { createApp } = await import('./app.js')
+    const app = createApp(1)
+
+    const res = await request(app).get('/healthz/')
+
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({ ok: true })
+  })
+
   it('API auth allows requests with the correct bearer token', async () => {
     vi.stubEnv('API_TOKEN', 'supersecret')
 

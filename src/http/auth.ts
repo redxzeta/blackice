@@ -4,13 +4,35 @@ import { sendOpenAIError } from './errors.js'
 
 const DEFAULT_AUTH_EXEMPT_PATHS = ['/healthz', '/readyz', '/version']
 
+function normalizePathname(value: string): string {
+  if (value === '/') {
+    return value
+  }
+
+  return value.replace(/\/+$/, '') || '/'
+}
+
 function parseExemptPaths(value: string | undefined): string[] {
   const raw = String(value ?? '')
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean)
+    .map(normalizePathname)
 
   return raw.length > 0 ? raw : DEFAULT_AUTH_EXEMPT_PATHS
+}
+
+function isExemptPath(requestPath: string, exemptPaths: string[]): boolean {
+  const rawRequestPath = String(requestPath)
+  const normalizedRequestPath = normalizePathname(rawRequestPath)
+  return exemptPaths.some((exemptPath) => {
+    const normalizedExemptPath = normalizePathname(exemptPath)
+    return (
+      rawRequestPath === normalizedExemptPath ||
+      rawRequestPath === `${normalizedExemptPath}/` ||
+      normalizedRequestPath === normalizedExemptPath
+    )
+  })
 }
 
 function isAuthorized(actual: string, expected: string): boolean {
@@ -42,7 +64,7 @@ export function bearerTokenAuthMiddleware(req: Request, res: Response, next: Nex
   }
 
   const exemptPaths = parseExemptPaths(process.env.AUTH_EXEMPT_PATHS)
-  if (exemptPaths.includes(req.path)) {
+  if (isExemptPath(req.path, exemptPaths)) {
     next()
     return
   }
