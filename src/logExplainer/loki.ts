@@ -1,0 +1,727 @@
+import { existsSync, readFileSync } from 'node:fs'
+import path from 'node:path'
+import { parse as parseYaml } from 'yaml'
+import { getRuntimeConfig } from '../config/runtimeConfig.js'
+import { buildLogExplainerError } from './error.js'
+import type { AnalyzeLogsBatchLokiRequest } from './schema.js'
+
+const runtimeConfig = getRuntimeConfig()
+const LOG_COLLECTION_TIMEOUT_MS = Number(runtimeConfig.limits.logCollectionTimeoutMs)
+const MAX_HOURS = Number(runtimeConfig.limits.maxQueryHours)
+const MAX_LINES_CAP = Number(runtimeConfig.limits.maxLinesCap)
+const LOKI_BASE_URL = String(runtimeConfig.loki.baseUrl).trim().replace(/\/$/, '')
+const LOKI_TIMEOUT_MS = Number(runtimeConfig.loki.timeoutMs)
+const LOKI_MAX_WINDOW_MINUTES = Number(runtimeConfig.loki.maxWindowMinutes)
+const LOKI_DEFAULT_WINDOW_MINUTES = Number(runtimeConfig.loki.defaultWindowMinutes)
+const LOKI_MAX_LINES_CAP = Number(runtimeConfig.loki.maxLinesCap)
+const LOKI_MAX_RESPONSE_BYTES = Number(runtimeConfig.loki.maxResponseBytes)
+const LOKI_REQUIRE_SCOPE_LABELS = Boolean(runtimeConfig.loki.requireScopeLabels)
+const LOKI_RULES_FILE_RAW = String(runtimeConfig.loki.rulesFile).trim()
+
+type LokiStreamResult = {
+  stream?: Record<string, string>
+  values?: [string, string][]
+}
+
+type LokiQueryRangeResponse = {
+  status?: string
+  data?: {
+    resultType?: string
+    result?: LokiStreamResult[]
+  }
+}
+
+type LokiRulesConfig = {
+  job?: string
+  allowedLabels: Set<string>
+  hosts: Set<string>
+  units: Set<string>
+  hostsRegex: RegExp | null
+  unitsRegex: RegExp | null
+}
+
+export type LokiDiscovery = {
+  job?: string
+  allowedLabels: string[]
+  hosts: string[]
+  units: string[]
+  hasHostsRegex: boolean
+  hasUnitsRegex: boolean
+  requireScopeLabels: boolean
+}
+
+let cachedLokiRules: LokiRulesConfig | null = null
+
+function parseStringArray(value: unknown, field: string, required: boolean): string[] {
+  if (value === undefined || value === null) {
+    if (required) {
+      throw buildLogExplainerError(503, `Loki rules file missing required field: ${field}`)
+    }
+
+    return []
+  }
+
+  if (!Array.isArray(value)) {
+    throw buildLogExplainerError(503, `Loki rules field "${field}" must be an array of strings`)
+  }
+
+  return value
+    .map((entry) => {
+      if (typeof entry !== 'string') {
+        throw buildLogExplainerError(503, `Loki rules field "${field}" must contain only strings`)
+      }
+
+      return entry.trim()
+    })
+    .filter(Boolean)
+}
+
+function parseOptionalRegex(raw: string, field: string): RegExp | null {
+  if (!raw) {
+    return null
+  }
+
+  try {
+    return new RegExp(raw)
+  } catch {
+    throw buildLogExplainerError(503, `Invalid regex in Loki rules field "${field}"`)
+  }
+}
+
+function matchesAllowlist(value: string, list: Set<string>, regex: RegExp | null): boolean {
+  if (list.size > 0 && list.has(value)) {
+    return true
+  }
+
+  if (regex?.test(value)) {
+    return true
+  }
+
+  return false
+}
+
+function loadLokiRulesConfig(): LokiRulesConfig {
+  if (cachedLokiRules) {
+    return cachedLokiRules
+  }
+
+  if (!LOKI_RULES_FILE_RAW) {
+    throw buildLogExplainerError(503, 'LOKI_RULES_FILE is required when Loki source is enabled')
+  }
+
+  const rulesFile = path.resolve(LOKI_RULES_FILE_RAW)
+
+  if (!existsSync(rulesFile)) {
+    throw buildLogExplainerError(503, `Loki rules file not found: ${rulesFile}`)
+  }
+
+  let parsed: unknown
+  try {
+    parsed = parseYaml(readFileSync(rulesFile, 'utf8'))
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw buildLogExplainerError(503, `Failed to read Loki rules file (${rulesFile}): ${message}`)
+  }
+
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw buildLogExplainerError(503, 'Loki rules file must contain a top-level object')
+  }
+
+  const body = parsed as Record<string, unknown>
+  const allowedLabels = new Set(parseStringArray(body.allowedLabels, 'allowedLabels', true))
+  if (allowedLabels.size === 0) {
+    throw buildLogExplainerError(
+      503,
+      'Loki rules file must include at least one allowedLabels entry'
+    )
+  }
+
+  const job = typeof body.job === 'string' ? body.job.trim() : ''
+  if (body.job !== undefined && typeof body.job !== 'string') {
+    throw buildLogExplainerError(503, 'Loki rules field "job" must be a string')
+  }
+
+  const hosts = new Set(parseStringArray(body.hosts, 'hosts', false))
+  const units = new Set(parseStringArray(body.units, 'units', false))
+
+  let hostsRegexRaw = ''
+  if (body.hostsRegex !== undefined) {
+    if (typeof body.hostsRegex !== 'string') {
+      throw buildLogExplainerError(503, 'Loki rules field "hostsRegex" must be a string')
+    }
+
+    hostsRegexRaw = body.hostsRegex.trim()
+  }
+
+  let unitsRegexRaw = ''
+  if (body.unitsRegex !== undefined) {
+    if (typeof body.unitsRegex !== 'string') {
+      throw buildLogExplainerError(503, 'Loki rules field "unitsRegex" must be a string')
+    }
+
+    unitsRegexRaw = body.unitsRegex.trim()
+  }
+
+  cachedLokiRules = {
+    job: job || undefined,
+    allowedLabels,
+    hosts,
+    units,
+    hostsRegex: parseOptionalRegex(hostsRegexRaw, 'hostsRegex'),
+    unitsRegex: parseOptionalRegex(unitsRegexRaw, 'unitsRegex'),
+  }
+
+  return cachedLokiRules
+}
+
+function parseSimpleSelector(selector: string): Map<string, string> {
+  const trimmed = selector.trim()
+
+  if (/\n|\r/.test(trimmed)) {
+    throw buildLogExplainerError(400, 'selector must be a single line')
+  }
+
+  if (/\||!=|=~|!~/.test(trimmed)) {
+    throw buildLogExplainerError(400, 'selector contains unsupported operators')
+  }
+
+  const match = trimmed.match(
+    /^\{\s*([a-zA-Z_][a-zA-Z0-9_]*\s*=\s*"[^"\n\r]*"\s*(,\s*[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*"[^"\n\r]*"\s*)*)?\}$/
+  )
+  if (!match) {
+    throw buildLogExplainerError(400, 'selector must be in format {key="value",key2="value2"}')
+  }
+
+  const inner = trimmed.slice(1, -1).trim()
+  const labels = new Map<string, string>()
+
+  if (!inner) {
+    return labels
+  }
+
+  const pairPattern = /\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*"([^"\n\r]*)"\s*(?:,|$)/gy
+
+  while (pairPattern.lastIndex < inner.length) {
+    const pairMatch = pairPattern.exec(inner)
+    if (!pairMatch) {
+      throw buildLogExplainerError(400, 'selector contains invalid label pair')
+    }
+
+    const [, key, value] = pairMatch
+    labels.set(key, value)
+  }
+
+  return labels
+}
+
+function normalizeSelector(selector: string): string {
+  const labels = parseSimpleSelector(selector)
+  const ordered = Array.from(labels.entries()).sort(([a], [b]) => a.localeCompare(b))
+  return `{${ordered.map(([key, value]) => `${key}="${value}"`).join(',')}}`
+}
+
+function validateLokiLabels(labels: Record<string, string>): void {
+  const rules = loadLokiRulesConfig()
+
+  for (const key of Object.keys(labels)) {
+    if (!rules.allowedLabels.has(key)) {
+      throw buildLogExplainerError(403, `Loki label "${key}" is not allowed`)
+    }
+  }
+
+  if (rules.job) {
+    const job = labels.job
+    if (!job) {
+      throw buildLogExplainerError(403, 'Loki filters must include job')
+    }
+
+    if (job !== rules.job) {
+      throw buildLogExplainerError(403, `Loki job "${job}" is not allowed`)
+    }
+  }
+
+  if (typeof labels.host === 'string') {
+    if (!matchesAllowlist(labels.host, rules.hosts, rules.hostsRegex)) {
+      throw buildLogExplainerError(403, `Loki host "${labels.host}" is not allowed`)
+    }
+  }
+
+  if (typeof labels.unit === 'string') {
+    if (!matchesAllowlist(labels.unit, rules.units, rules.unitsRegex)) {
+      throw buildLogExplainerError(403, `Loki unit "${labels.unit}" is not allowed`)
+    }
+  }
+}
+
+function extractSelectorExpression(query: string): string {
+  const start = query.indexOf('{')
+  if (start < 0) {
+    throw buildLogExplainerError(400, 'Loki query must include a selector block')
+  }
+
+  let depth = 0
+  for (let i = start; i < query.length; i += 1) {
+    const ch = query[i]
+    if (ch === '{') {
+      depth += 1
+    } else if (ch === '}') {
+      depth -= 1
+      if (depth === 0) {
+        return query.slice(start, i + 1)
+      }
+    }
+  }
+
+  throw buildLogExplainerError(400, 'Loki query contains an unclosed selector block')
+}
+
+function ensureAllowlistedSelectorFromQuery(query: string): void {
+  const selector = extractSelectorExpression(query)
+  validateAllowedLokiSelector(selector)
+}
+
+function escapeLogQLStringLiteral(input: string): string {
+  return input.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+}
+
+function hasScopeLabelsInFilters(filters: Record<string, string>): boolean {
+  return typeof filters.host === 'string' || typeof filters.unit === 'string'
+}
+
+function enforceScopeGuard(input: AnalyzeLogsBatchLokiRequest, effectiveQuery: string): void {
+  if (!LOKI_REQUIRE_SCOPE_LABELS || input.allowUnscoped) {
+    return
+  }
+
+  const scoped =
+    (typeof input.query === 'string' &&
+      /\b(?:host|unit)\s*(?:=|!=|=~|!~)\s*"/.test(effectiveQuery)) ||
+    (input.filters !== undefined && hasScopeLabelsInFilters(input.filters))
+
+  if (!scoped) {
+    throw buildLogExplainerError(
+      400,
+      'Loki query must include host or unit label (or set allowUnscoped=true)'
+    )
+  }
+}
+
+function clampLokiLimit(limit: number): number {
+  if (!Number.isInteger(limit) || limit <= 0) {
+    throw buildLogExplainerError(400, 'limit must be a positive integer')
+  }
+
+  return Math.min(limit, Math.max(1, Math.floor(LOKI_MAX_LINES_CAP)))
+}
+
+function formatStreamLabels(labels: Record<string, string>): string {
+  return Object.entries(labels)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `${key}=${value}`)
+    .join(',')
+}
+
+function headersWithAuth(): Record<string, string> {
+  return {}
+}
+
+export function isLokiEnabled(): boolean {
+  return Boolean(LOKI_BASE_URL)
+}
+
+export function ensureLokiRulesConfigured(): void {
+  if (!isLokiEnabled()) {
+    return
+  }
+
+  loadLokiRulesConfig()
+}
+
+export function getLokiSyntheticTargets(): string[] {
+  return []
+}
+
+export function getLokiDiscovery(): LokiDiscovery {
+  if (!isLokiEnabled()) {
+    return {
+      allowedLabels: [],
+      hosts: [],
+      units: [],
+      hasHostsRegex: false,
+      hasUnitsRegex: false,
+      requireScopeLabels: LOKI_REQUIRE_SCOPE_LABELS,
+    }
+  }
+
+  const rules = loadLokiRulesConfig()
+  return {
+    job: rules.job,
+    allowedLabels: [...rules.allowedLabels].sort(),
+    hosts: [...rules.hosts].sort(),
+    units: [...rules.units].sort(),
+    hasHostsRegex: rules.hostsRegex !== null,
+    hasUnitsRegex: rules.unitsRegex !== null,
+    requireScopeLabels: LOKI_REQUIRE_SCOPE_LABELS,
+  }
+}
+
+export function validateAllowedLokiSelector(selector: string): string {
+  if (!isLokiEnabled()) {
+    throw buildLogExplainerError(503, 'loki source is disabled (set LOKI_BASE_URL)')
+  }
+
+  const normalized = normalizeSelector(selector)
+  const candidate = parseSimpleSelector(normalized)
+  validateLokiLabels(Object.fromEntries(candidate.entries()))
+  return normalized
+}
+
+export function buildEffectiveLokiQuery(input: AnalyzeLogsBatchLokiRequest): string {
+  if (input.source !== 'loki') {
+    throw buildLogExplainerError(400, 'source must be loki')
+  }
+
+  if (typeof input.query === 'string' && input.query.trim().length > 0) {
+    throw buildLogExplainerError(403, 'raw Loki query is not allowed; use filters')
+  }
+
+  if (!input.filters) {
+    throw buildLogExplainerError(400, 'filters are required when query is not provided')
+  }
+
+  validateLokiLabels(input.filters)
+
+  const selector = Object.entries(input.filters)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `${key}="${escapeLogQLStringLiteral(value)}"`)
+    .join(',')
+  const contains = input.contains ? ` |= "${escapeLogQLStringLiteral(input.contains)}"` : ''
+  const regex = input.regex ? ` |~ "${escapeLogQLStringLiteral(input.regex)}"` : ''
+  return `{${selector}}${contains}${regex}`
+}
+
+export function resolveLokiTimeRange(input: {
+  start?: string
+  end?: string
+  sinceSeconds?: number
+}): { startNs: string; endNs: string; hours: number } {
+  const now = new Date()
+  let startDate: Date
+  let endDate: Date
+
+  if (typeof input.sinceSeconds === 'number') {
+    if (!Number.isInteger(input.sinceSeconds) || input.sinceSeconds <= 0) {
+      throw buildLogExplainerError(400, 'sinceSeconds must be a positive integer')
+    }
+
+    endDate = now
+    startDate = new Date(now.getTime() - input.sinceSeconds * 1_000)
+  } else {
+    const fallbackEnd = now
+    const fallbackStart = new Date(
+      now.getTime() - Math.max(1, LOKI_DEFAULT_WINDOW_MINUTES) * 60 * 1_000
+    )
+    startDate = input.start ? new Date(input.start) : fallbackStart
+    endDate = input.end ? new Date(input.end) : fallbackEnd
+  }
+
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+    throw buildLogExplainerError(400, 'start/end must be valid ISO-8601 timestamps')
+  }
+
+  if (startDate.getTime() >= endDate.getTime()) {
+    throw buildLogExplainerError(400, 'start must be earlier than end')
+  }
+
+  const maxWindowMinutes = Math.max(1, Math.floor(LOKI_MAX_WINDOW_MINUTES))
+  const windowMinutes = (endDate.getTime() - startDate.getTime()) / 60_000
+  if (windowMinutes > maxWindowMinutes) {
+    throw buildLogExplainerError(
+      400,
+      `Loki time window exceeds ${String(maxWindowMinutes)} minutes`
+    )
+  }
+
+  const startNs = (BigInt(startDate.getTime()) * 1_000_000n).toString()
+  const endNs = (BigInt(endDate.getTime()) * 1_000_000n).toString()
+  return {
+    startNs,
+    endNs,
+    hours: Math.max(1 / 60, windowMinutes / 60),
+  }
+}
+
+export async function checkLokiHealth(): Promise<{
+  enabled: boolean
+  ok: boolean
+  status: number
+  details: string
+}> {
+  if (!isLokiEnabled()) {
+    return {
+      enabled: false,
+      ok: false,
+      status: 503,
+      details: 'loki is disabled: set LOKI_BASE_URL',
+    }
+  }
+
+  try {
+    const response = await fetch(`${LOKI_BASE_URL}/ready`, {
+      headers: headersWithAuth(),
+    })
+
+    return {
+      enabled: true,
+      ok: response.ok,
+      status: response.status,
+      details: response.ok
+        ? 'loki is ready'
+        : `loki readiness check failed with status ${response.status}`,
+    }
+  } catch (error: unknown) {
+    return {
+      enabled: true,
+      ok: false,
+      status: 502,
+      details: error instanceof Error ? error.message : 'failed to reach loki',
+    }
+  }
+}
+
+export async function collectLokiLogs(input: {
+  selector: string
+  hours?: number
+  sinceMinutes?: number
+  maxLines: number
+}): Promise<string> {
+  if (!isLokiEnabled()) {
+    throw buildLogExplainerError(503, 'loki source is disabled (set LOKI_BASE_URL)')
+  }
+
+  const selector = validateAllowedLokiSelector(input.selector)
+
+  let windowMs = Math.min(Math.max(1, Math.floor(input.hours ?? 6)), MAX_HOURS) * 60 * 60 * 1_000
+  if (typeof input.sinceMinutes === 'number') {
+    if (!Number.isInteger(input.sinceMinutes) || input.sinceMinutes <= 0) {
+      throw buildLogExplainerError(400, 'sinceMinutes must be a positive integer')
+    }
+
+    windowMs = Math.min(input.sinceMinutes * 60 * 1_000, MAX_HOURS * 60 * 60 * 1_000)
+  }
+
+  const safeMaxLines = Math.min(
+    Math.max(1, Math.floor(input.maxLines)),
+    Math.max(1, Math.floor(MAX_LINES_CAP))
+  )
+  const nowNs = BigInt(Date.now()) * 1_000_000n
+  const startNs = nowNs - BigInt(windowMs) * 1_000_000n
+
+  const url = new URL(`${LOKI_BASE_URL}/loki/api/v1/query_range`)
+  url.searchParams.set('query', selector)
+  url.searchParams.set('start', startNs.toString())
+  url.searchParams.set('end', nowNs.toString())
+  url.searchParams.set('direction', 'backward')
+  url.searchParams.set('limit', String(safeMaxLines))
+
+  let response: Response
+  try {
+    response = await fetch(url, {
+      headers: headersWithAuth(),
+      signal: AbortSignal.timeout(LOG_COLLECTION_TIMEOUT_MS),
+    })
+  } catch (error: unknown) {
+    if (error instanceof DOMException && error.name === 'TimeoutError') {
+      throw buildLogExplainerError(504, 'loki query timed out')
+    }
+
+    throw buildLogExplainerError(
+      502,
+      `failed to query loki: ${error instanceof Error ? error.message : 'unknown error'}`
+    )
+  }
+
+  if (!response.ok) {
+    throw buildLogExplainerError(502, `loki query failed with status ${response.status}`)
+  }
+
+  const payload = (await response.json()) as {
+    status?: string
+    data?: {
+      resultType?: string
+      result?: Array<{
+        stream?: Record<string, string>
+        values?: Array<[string, string]>
+      }>
+    }
+  }
+
+  if (payload.status !== 'success' || !payload.data || payload.data.resultType !== 'streams') {
+    throw buildLogExplainerError(502, 'invalid loki response payload')
+  }
+
+  const merged: Array<{ ts: bigint; line: string }> = []
+
+  for (const stream of payload.data.result ?? []) {
+    for (const value of stream.values ?? []) {
+      const [tsRaw, line] = value
+      merged.push({ ts: BigInt(tsRaw), line: String(line ?? '') })
+    }
+  }
+
+  merged.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0))
+  return merged
+    .slice(-safeMaxLines)
+    .map((entry) => entry.line)
+    .join('\n')
+}
+
+export async function queryLokiRange(input: {
+  query: string
+  startNs: string
+  endNs: string
+  limit: number
+}): Promise<string> {
+  if (!isLokiEnabled()) {
+    throw buildLogExplainerError(503, 'loki source is disabled (set LOKI_BASE_URL)')
+  }
+
+  const safeLimit = clampLokiLimit(input.limit)
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), Math.max(100, Math.floor(LOKI_TIMEOUT_MS)))
+
+  try {
+    const queryRangeUrl = new URL(`${LOKI_BASE_URL}/loki/api/v1/query_range`)
+    queryRangeUrl.searchParams.set('query', input.query)
+    queryRangeUrl.searchParams.set('start', input.startNs)
+    queryRangeUrl.searchParams.set('end', input.endNs)
+    queryRangeUrl.searchParams.set('limit', String(safeLimit))
+
+    const response = await fetch(queryRangeUrl, {
+      headers: headersWithAuth(),
+      signal: controller.signal,
+    })
+
+    if (!response.ok) {
+      const body = await response.text()
+      throw buildLogExplainerError(
+        502,
+        `Loki query_range failed (${response.status}): ${body.slice(0, 300)}`
+      )
+    }
+
+    const payload = (await response.json()) as LokiQueryRangeResponse
+    if (
+      payload.status !== 'success' ||
+      payload.data?.resultType !== 'streams' ||
+      !Array.isArray(payload.data.result)
+    ) {
+      throw buildLogExplainerError(502, 'Loki returned an unexpected query_range payload')
+    }
+
+    const flattened: Array<{ ts: bigint; line: string }> = []
+    for (const streamResult of payload.data.result) {
+      const labels = streamResult.stream ?? {}
+      const labelPrefix = formatStreamLabels(labels)
+      const values = Array.isArray(streamResult.values) ? streamResult.values : []
+      for (const tuple of values) {
+        if (!Array.isArray(tuple) || tuple.length < 2) {
+          continue
+        }
+
+        const tsRaw = tuple[0]
+        const lineRaw = tuple[1]
+        if (typeof tsRaw !== 'string' || typeof lineRaw !== 'string') {
+          continue
+        }
+
+        try {
+          const tsNs = BigInt(tsRaw)
+          const tsIso = new Date(Number(tsNs / 1_000_000n)).toISOString()
+          flattened.push({
+            ts: tsNs,
+            line: labelPrefix ? `${tsIso} [${labelPrefix}] ${lineRaw}` : `${tsIso} ${lineRaw}`,
+          })
+        } catch {}
+      }
+    }
+
+    flattened.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0))
+
+    const maxBytes = Math.max(1_000, Math.floor(LOKI_MAX_RESPONSE_BYTES))
+    const outLines: string[] = []
+    let bytesUsed = 0
+    let truncated = false
+
+    for (const entry of flattened.slice(-safeLimit)) {
+      const lineBytes = Buffer.byteLength(`${entry.line}\n`, 'utf8')
+      if (bytesUsed + lineBytes > maxBytes) {
+        truncated = true
+        break
+      }
+
+      outLines.push(entry.line)
+      bytesUsed += lineBytes
+    }
+
+    if (truncated) {
+      outLines.push('[truncated] Loki response exceeded LOKI_MAX_RESPONSE_BYTES')
+    }
+
+    return outLines.join('\n')
+  } catch (error: unknown) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw buildLogExplainerError(504, 'Loki request timed out')
+    }
+
+    if (typeof error === 'object' && error !== null && 'status' in error) {
+      throw error
+    }
+
+    const message = error instanceof Error ? error.message : String(error)
+    throw buildLogExplainerError(502, `Loki request failed: ${message}`)
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+export async function collectLokiBatchLogs(input: AnalyzeLogsBatchLokiRequest): Promise<{
+  query: string
+  logs: string
+  limit: number
+  hours: number
+}> {
+  if (input.source !== 'loki') {
+    throw buildLogExplainerError(400, 'source must be loki')
+  }
+
+  const query = buildEffectiveLokiQuery(input)
+  enforceScopeGuard(input, query)
+  ensureAllowlistedSelectorFromQuery(query)
+  const { startNs, endNs, hours } = resolveLokiTimeRange({
+    start: input.start,
+    end: input.end,
+    sinceSeconds: input.sinceSeconds,
+  })
+  const limit = clampLokiLimit(input.limit ?? 2_000)
+  const logs = await queryLokiRange({
+    query,
+    startNs,
+    endNs,
+    limit,
+  })
+
+  return { query, logs, limit, hours }
+}
+
+export function getLokiRuntimeLimits() {
+  return {
+    enabled: isLokiEnabled(),
+    timeoutMs: Math.max(100, Math.floor(LOKI_TIMEOUT_MS)),
+    maxWindowMinutes: Math.max(1, Math.floor(LOKI_MAX_WINDOW_MINUTES)),
+    defaultWindowMinutes: Math.max(1, Math.floor(LOKI_DEFAULT_WINDOW_MINUTES)),
+    maxLinesCap: Math.max(1, Math.floor(LOKI_MAX_LINES_CAP)),
+    maxResponseBytes: Math.max(1_000, Math.floor(LOKI_MAX_RESPONSE_BYTES)),
+    requireScopeLabels: LOKI_REQUIRE_SCOPE_LABELS,
+  }
+}
