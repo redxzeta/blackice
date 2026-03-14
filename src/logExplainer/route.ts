@@ -159,22 +159,28 @@ function resolveEvidenceLinesForMode(
 }
 
 function getRateLimitClientKey(req: Request): string {
-  const forwardedFor = req.header('x-forwarded-for')
-  if (typeof forwardedFor === 'string') {
-    const first = forwardedFor
-      .split(',')
-      .map((part) => part.trim())
-      .find((part) => part.length > 0)
-    if (first) {
-      return first
-    }
-  }
-
   if (typeof req.ip === 'string' && req.ip.length > 0) {
     return req.ip
   }
 
+  if (typeof req.socket.remoteAddress === 'string' && req.socket.remoteAddress.length > 0) {
+    return req.socket.remoteAddress
+  }
+
   return 'unknown'
+}
+
+function evictExpiredRateLimitBuckets(now: number, policy: RateLimitPolicy): void {
+  const keyPrefix = `${policy.key}:`
+  for (const [bucketKey, bucket] of rateLimitBuckets.entries()) {
+    if (!bucketKey.startsWith(keyPrefix)) {
+      continue
+    }
+
+    if (now - bucket.windowStartedAt >= policy.windowMs) {
+      rateLimitBuckets.delete(bucketKey)
+    }
+  }
 }
 
 function enforceLogAnalysisRateLimit(
@@ -183,23 +189,20 @@ function enforceLogAnalysisRateLimit(
   policy: RateLimitPolicy
 ): boolean {
   const now = Date.now()
+  evictExpiredRateLimitBuckets(now, policy)
   const clientKey = getRateLimitClientKey(req)
   const bucketKey = `${policy.key}:${clientKey}`
   const existing = rateLimitBuckets.get(bucketKey)
   const windowStartedAt =
     existing && now - existing.windowStartedAt < policy.windowMs ? existing.windowStartedAt : now
-  const hits =
-    existing && now - existing.windowStartedAt < policy.windowMs ? existing.hits + 1 : 1
+  const hits = existing && now - existing.windowStartedAt < policy.windowMs ? existing.hits + 1 : 1
 
   rateLimitBuckets.set(bucketKey, {
     windowStartedAt,
     hits,
   })
 
-  const retryAfterSeconds = Math.max(
-    1,
-    Math.ceil((windowStartedAt + policy.windowMs - now) / 1000)
-  )
+  const retryAfterSeconds = Math.max(1, Math.ceil((windowStartedAt + policy.windowMs - now) / 1000))
   const remaining = Math.max(0, policy.maxRequests - hits)
 
   res.setHeader('Retry-After', String(retryAfterSeconds))

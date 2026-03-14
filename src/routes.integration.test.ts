@@ -12,6 +12,7 @@ describe('integration routes', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
     vi.restoreAllMocks()
   })
 
@@ -132,14 +133,14 @@ describe('integration routes', () => {
     for (let i = 0; i < 5; i += 1) {
       const okRes = await request(app)
         .post('/analyze/logs')
-        .set('x-forwarded-for', '198.51.100.10')
+        .set('x-forwarded-for', `198.51.100.${10 + i}`)
         .send(payload)
       expect(okRes.status).toBe(200)
     }
 
     const limitedRes = await request(app)
       .post('/analyze/logs')
-      .set('x-forwarded-for', '198.51.100.10')
+      .set('x-forwarded-for', '203.0.113.200')
       .send(payload)
 
     expect(limitedRes.status).toBe(429)
@@ -159,7 +160,7 @@ describe('integration routes', () => {
           msg: 'log_explainer_rate_limit_hit',
           fields: expect.objectContaining({
             path: '/analyze/logs',
-            client: '198.51.100.10',
+            client: expect.stringMatching(/^(::1|::ffff:127\.0\.0\.1|127\.0\.0\.1)$/),
             limit: 5,
           }),
         }),
@@ -192,14 +193,14 @@ describe('integration routes', () => {
     for (let i = 0; i < 2; i += 1) {
       const okRes = await request(app)
         .post('/analyze/logs/batch')
-        .set('x-forwarded-for', '198.51.100.11')
+        .set('x-forwarded-for', `198.51.100.${20 + i}`)
         .send(payload)
       expect(okRes.status).toBe(200)
     }
 
     const limitedRes = await request(app)
       .post('/analyze/logs/batch')
-      .set('x-forwarded-for', '198.51.100.11')
+      .set('x-forwarded-for', '203.0.113.201')
       .send(payload)
 
     expect(limitedRes.status).toBe(429)
