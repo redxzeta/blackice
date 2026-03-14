@@ -243,6 +243,106 @@ describe('integration routes', () => {
     expect(metadataPaths.sort()).toEqual([...statusRes.body.endpoints].sort())
   })
 
+  it('POST /analyze/logs enforces per client rate limits with retry guidance and telemetry', async () => {
+    vi.doMock('./logExplainer/logCollector.js', () => ({
+      checkLokiHealth: vi.fn(),
+      collectLogs: vi.fn(async () => 'line 1'),
+      collectLokiBatchLogs: vi.fn(),
+      ensureLokiRulesConfigured: vi.fn(),
+      getLokiSyntheticTargets: vi.fn(() => []),
+    }))
+    vi.doMock('./logExplainer/ollamaClient.js', () => ({
+      analyzeLogsWithOllama: vi.fn(async () => 'ok'),
+    }))
+
+    const { createApp } = await import('./app.js')
+    const { getRecentLogs } = await import('./log.js')
+    const app = createApp(1)
+    const payload = {
+      source: 'journald',
+      target: 'ssh.service',
+      hours: 1,
+      maxLines: 20,
+    }
+
+    for (let i = 0; i < 5; i += 1) {
+      const okRes = await request(app)
+        .post('/analyze/logs')
+        .set('x-forwarded-for', `198.51.100.${10 + i}`)
+        .send(payload)
+      expect(okRes.status).toBe(200)
+    }
+
+    const limitedRes = await request(app)
+      .post('/analyze/logs')
+      .set('x-forwarded-for', '203.0.113.200')
+      .send(payload)
+
+    expect(limitedRes.status).toBe(429)
+    expect(limitedRes.body).toEqual({
+      error: 'Rate limit exceeded',
+      type: 'rate_limit_exceeded',
+      path: '/analyze/logs',
+      retryAfterSeconds: expect.any(Number),
+    })
+    expect(Number(limitedRes.headers['retry-after'])).toBeGreaterThanOrEqual(1)
+    expect(limitedRes.headers['x-ratelimit-limit']).toBe('5')
+    expect(limitedRes.headers['x-ratelimit-remaining']).toBe('0')
+
+    expect(getRecentLogs()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          msg: 'log_explainer_rate_limit_hit',
+          fields: expect.objectContaining({
+            path: '/analyze/logs',
+            client: expect.stringMatching(/^(::1|::ffff:127\.0\.0\.1|127\.0\.0\.1)$/),
+            limit: 5,
+          }),
+        }),
+      ])
+    )
+  })
+
+  it('POST /analyze/logs/batch uses a stricter limit than single target analysis', async () => {
+    vi.doMock('./logExplainer/logCollector.js', () => ({
+      checkLokiHealth: vi.fn(),
+      collectLogs: vi.fn(async () => 'line 1'),
+      collectLokiBatchLogs: vi.fn(),
+      ensureLokiRulesConfigured: vi.fn(),
+      getLokiSyntheticTargets: vi.fn(() => []),
+    }))
+    vi.doMock('./logExplainer/ollamaClient.js', () => ({
+      analyzeLogsWithOllama: vi.fn(async () => 'ok'),
+    }))
+
+    const { createApp } = await import('./app.js')
+    const app = createApp(1)
+    const payload = {
+      source: 'journald',
+      targets: ['ssh.service'],
+      hours: 1,
+      maxLines: 20,
+      concurrency: 1,
+    }
+
+    for (let i = 0; i < 2; i += 1) {
+      const okRes = await request(app)
+        .post('/analyze/logs/batch')
+        .set('x-forwarded-for', `198.51.100.${20 + i}`)
+        .send(payload)
+      expect(okRes.status).toBe(200)
+    }
+
+    const limitedRes = await request(app)
+      .post('/analyze/logs/batch')
+      .set('x-forwarded-for', '203.0.113.201')
+      .send(payload)
+
+    expect(limitedRes.status).toBe(429)
+    expect(limitedRes.body.path).toBe('/analyze/logs/batch')
+    expect(limitedRes.headers['x-ratelimit-limit']).toBe('2')
+  })
+
   it('GET /v1/models/check returns availability for the configured model', async () => {
     vi.stubGlobal(
       'fetch',
