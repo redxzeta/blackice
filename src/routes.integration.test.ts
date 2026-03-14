@@ -174,7 +174,9 @@ describe('integration routes', () => {
     expect(healthRes.status).toBe(200)
 
     const metricsAfterTraffic = await request(app).get('/metrics')
-    expect(metricsAfterTraffic.text).toContain('blackice_http_requests_total{route="/healthz",method="GET",status="200"} 1')
+    expect(metricsAfterTraffic.text).toContain(
+      'blackice_http_requests_total{route="/healthz",method="GET",status="200"} 1'
+    )
   })
 
   it('GET /v1/models/check returns 504 when the upstream probe times out', async () => {
