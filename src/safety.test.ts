@@ -2,13 +2,31 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { isPathWithinAllowlist } from './safety.js'
+import { isPathWithinAllowlist, runBoundedCommand } from './safety.js'
 
 afterEach(() => {
   vi.restoreAllMocks()
 })
 
 describe('safety.ts', () => {
+  it('caps stderr output in bounded commands', async () => {
+    await expect(
+      runBoundedCommand('node', ['-e', "process.stderr.write('x'.repeat(32))"], {
+        timeoutMs: 1_000,
+        maxBytes: 8,
+      })
+    ).rejects.toThrow('command output exceeded byte limit')
+  })
+
+  it('preserves raw stdout without trimming', async () => {
+    await expect(
+      runBoundedCommand('node', ['-e', "process.stdout.write('  first line\\nsecond line\\n')"], {
+        timeoutMs: 1_000,
+        maxBytes: 1_024,
+      })
+    ).resolves.toBe('  first line\nsecond line\n')
+  })
+
   it('allows files inside an allowlisted directory', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'blackice-safety-'))
     const allowedDir = path.join(root, 'logs')

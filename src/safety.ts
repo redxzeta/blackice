@@ -56,6 +56,11 @@ export function runBoundedCommand(
         return
       }
       stderr += buf.toString('utf8')
+      if (Buffer.byteLength(stderr, 'utf8') > options.maxBytes) {
+        settled = true
+        child.kill('SIGKILL')
+        reject(toError('command output exceeded byte limit', 413))
+      }
     })
 
     child.on('error', (error: Error) => {
@@ -79,7 +84,7 @@ export function runBoundedCommand(
         return
       }
 
-      resolve(stdout.trim())
+      resolve(stdout)
     })
   })
 }
@@ -100,7 +105,9 @@ export async function isPathWithinAllowlist(
       const realAllowed = await fs.realpath(entry)
       const stat = await fs.stat(realAllowed)
       if (stat.isDirectory()) {
-        const normalized = realAllowed.endsWith(path.sep) ? realAllowed : `${realAllowed}${path.sep}`
+        const normalized = realAllowed.endsWith(path.sep)
+          ? realAllowed
+          : `${realAllowed}${path.sep}`
         if (realRequested.startsWith(normalized)) {
           return true
         }
