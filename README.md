@@ -71,6 +71,7 @@ pnpm run dev
 - `GET /v1/models/check`
 - `GET /health/loki`
 
+
 ## Envelope Contract
 Latest `user` message is interpreted as:
 
@@ -322,6 +323,27 @@ API metrics (last 1 hour):
 ```bash
 curl -sS "http://127.0.0.1:3000/logs/metrics?window=1h"
 ```
+### Metrics Window Parameter
+
+The `/logs/metrics` endpoint accepts a `window` parameter that defines the time range for metrics aggregation.
+
+Format:
+
+<number><unit>
+
+Supported units:
+- s = seconds
+- m = minutes
+- h = hours
+- d = days
+
+Examples:
+
+/logs/metrics?window=30m
+/logs/metrics?window=1h
+/logs/metrics?window=1d
+
+If an invalid value is provided, the system falls back to the default window of **1 hour**.
 
 Readiness check:
 
