@@ -1,6 +1,7 @@
 import express from 'express'
 import { registerLogExplainerRoutes } from './logExplainer/route.js'
 import { getVersionInfo } from './version.js'
+import { bearerTokenAuthMiddleware } from './http/auth.js'
 import { requestLoggingMiddleware } from './http/requestLogging.js'
 import { registerChatCompletionsRoute } from './routes/chatCompletions.js'
 import { registerPolicyRoutes } from './routes/policy.js'
@@ -19,6 +20,7 @@ export function createApp(maxActiveDebates: number) {
     res.setHeader('x-blackice-version', versionInfo.version)
     next()
   })
+  app.use(bearerTokenAuthMiddleware)
 
   registerLogExplainerRoutes(app)
   registerChatCompletionsRoute(app)

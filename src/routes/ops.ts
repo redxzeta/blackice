@@ -1,9 +1,11 @@
 import type { Express, Request, Response } from 'express'
+import { env } from '../config/env.js'
 import { getLogMetrics, getRecentLogs } from '../log.js'
+import { renderPrometheusMetrics } from '../http/metrics.js'
 import type { VersionInfo } from '../version.js'
 
 export function registerOpsRoutes(app: Express, versionInfo: VersionInfo): void {
-  const opsEnabled = process.env.OPS_ENABLED === '1'
+  const opsEnabled = env.OPS_ENABLED
 
   app.get('/healthz', (_req: Request, res: Response) => {
     res.status(200).json({ ok: true })
@@ -37,6 +39,12 @@ export function registerOpsRoutes(app: Express, versionInfo: VersionInfo): void 
         ok: true,
         ...metrics,
       })
+    })
+  }
+
+  if (env.METRICS_ENABLED) {
+    app.get(env.METRICS_EXPOSE_PATH, (_req: Request, res: Response) => {
+      res.type('text/plain').send(renderPrometheusMetrics())
     })
   }
 }
