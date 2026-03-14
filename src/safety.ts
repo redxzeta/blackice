@@ -100,7 +100,9 @@ export async function isPathWithinAllowlist(
       const realAllowed = await fs.realpath(entry)
       const stat = await fs.stat(realAllowed)
       if (stat.isDirectory()) {
-        const normalized = realAllowed.endsWith(path.sep) ? realAllowed : `${realAllowed}${path.sep}`
+        const normalized = realAllowed.endsWith(path.sep)
+          ? realAllowed
+          : `${realAllowed}${path.sep}`
         if (realRequested.startsWith(normalized)) {
           return true
         }

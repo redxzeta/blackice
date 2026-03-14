@@ -290,10 +290,7 @@ async function analyzeFromRawLogs(
   const unsafeOutput = !safety.safe ? sanitizeReadOnlyAnalysisOutput(analysis) : null
   const secretRedaction = redactSecrets(unsafeOutput?.analysis ?? analysis)
 
-  const redactedReasons = [
-    ...(unsafeOutput?.reasons ?? []),
-    ...secretRedaction.reasons,
-  ]
+  const redactedReasons = [...(unsafeOutput?.reasons ?? []), ...secretRedaction.reasons]
   const redacted = Boolean(unsafeOutput?.redacted || secretRedaction.redacted)
 
   if (redacted) {
