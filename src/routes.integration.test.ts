@@ -135,6 +135,58 @@ describe('integration routes', () => {
     })
   })
 
+  it('GET /analyze/logs/targets stays available when Loki is disabled', async () => {
+    const repoRoot = process.cwd()
+    const configPath = path.join(repoRoot, '.tmp-targets-disabled-config.yaml')
+    await writeFile(
+      configPath,
+      [
+        'version: 1',
+        'ollama:',
+        '  baseUrl: "http://127.0.0.1:11434"',
+        '  model: "qwen2.5:14b"',
+        '  timeoutMs: 45000',
+        '  retryAttempts: 2',
+        '  retryBackoffMs: 1000',
+        'loki:',
+        '  baseUrl: ""',
+        '  timeoutMs: 10000',
+        '  maxWindowMinutes: 60',
+        '  defaultWindowMinutes: 15',
+        '  maxLinesCap: 2000',
+        '  maxResponseBytes: 2000000',
+        '  requireScopeLabels: true',
+        '  rulesFile: ""',
+        'limits:',
+        '  logCollectionTimeoutMs: 15000',
+        '  maxCommandBytes: 2000000',
+        '  maxQueryHours: 168',
+        '  maxLinesCap: 2000',
+        '  maxConcurrency: 5',
+        '  maxLogChars: 40000',
+      ].join('\n')
+    )
+    process.env.BLACKICE_CONFIG_FILE = configPath
+
+    const { createApp } = await import('./app.js')
+    const app = createApp(1)
+
+    const res = await request(app).get('/analyze/logs/targets')
+
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({
+      targets: [],
+      discovery: {
+        allowedLabels: [],
+        hosts: [],
+        units: [],
+        hasHostsRegex: false,
+        hasUnitsRegex: false,
+        requireScopeLabels: true,
+      },
+    })
+  })
+
   it('GET /analyze/logs/metadata stays aligned with status endpoint list', async () => {
     const { createApp } = await import('./app.js')
     const app = createApp(1)

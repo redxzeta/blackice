@@ -392,6 +392,17 @@ export function getLokiSyntheticTargets(): string[] {
 }
 
 export function getLokiDiscovery(): LokiDiscovery {
+  if (!isLokiEnabled()) {
+    return {
+      allowedLabels: [],
+      hosts: [],
+      units: [],
+      hasHostsRegex: false,
+      hasUnitsRegex: false,
+      requireScopeLabels: LOKI_REQUIRE_SCOPE_LABELS,
+    }
+  }
+
   const rules = loadLokiRulesConfig()
   return {
     job: rules.job,
