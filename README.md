@@ -65,6 +65,7 @@ pnpm run dev
 - `POST /v1/policy/dry-run`
 - `GET /logs/recent` *(requires `OPS_ENABLED=1`)*
 - `GET /logs/metrics` *(requires `OPS_ENABLED=1`)*
+- `GET /metrics` *(requires `METRICS_ENABLED=1`, default enabled; path configurable via `METRICS_EXPOSE_PATH`)*
 - `GET /version`
 - `GET /healthz`
 - `GET /readyz`
@@ -115,6 +116,8 @@ Security controls:
 - `OLLAMA_MODEL` (default: `qwen2.5:14b`)
 - `PORT` (default: `3000`)
 - `BLACKICE_CONFIG_FILE` (default: `./config/blackice.local.yaml`; use `./config/blackice.e2e.yaml` or `./config/blackice.prod.yaml`)
+- `API_TOKEN` (optional; when set, all non exempt API routes require `Authorization: Bearer <token>`)
+- `AUTH_EXEMPT_PATHS` (optional CSV; defaults to `/healthz,/readyz,/version`)
 - `ACTIONS_ENABLED` (`true`/`false`, default `true`)
 - `LOG_LEVEL` (`info`/`debug`, default `info`)
 - `ALLOWLIST_LOG_PATHS` (comma-separated absolute files or directories)
@@ -133,6 +136,8 @@ Security controls:
 - `DEBATE_MAX_CONCURRENT` (default `1`; max active `/v1/debate` requests)
 - `LOG_BUFFER_MAX_ENTRIES` (default `2000`; in-memory API log buffer size for `/logs/*`)
 - `OPS_ENABLED` (`1` to expose `/logs/recent` and `/logs/metrics`; default disabled)
+- `METRICS_ENABLED` (`1` or `0`; default `1`; controls the Prometheus metrics endpoint)
+- `METRICS_EXPOSE_PATH` (default `/metrics`; HTTP path for Prometheus exposition)
 - `STREAM_SUPPRESS_TOOLISH` (`1` to suppress tool-call-like SSE payloads; default preserves raw output)
 - `READINESS_TIMEOUT_MS` (default `1500`; timeout in ms for `/readyz` Ollama probe, clamped to `100..10000`)
 - `READINESS_STRICT` (`1` or `0`, default `1`; when `1`, `/readyz` returns `503` if upstream is unavailable)
@@ -183,6 +188,19 @@ pnpm run test:watch
 ```
 
 ## Quick Tests
+Optional bearer token auth:
+```bash
+API_TOKEN=supersecret AUTH_EXEMPT_PATHS=/healthz,/readyz,/version pnpm start
+
+curl -sS http://127.0.0.1:3000/v1/chat/completions \
+  -H 'Authorization: Bearer supersecret' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "router/default",
+    "messages": [{"role":"user","content":"hi"}]
+  }'
+```
+
 Streaming CHAT:
 ```bash
 curl -N -sS http://127.0.0.1:3000/v1/chat/completions \
@@ -352,6 +370,21 @@ Examples:
 /logs/metrics?window=1d
 
 If an invalid value is provided, the system falls back to the default window of **1 hour**.
+
+Prometheus scrape endpoint:
+```bash
+curl -sS "http://127.0.0.1:3000/metrics"
+```
+
+Exported HTTP metrics:
+- `blackice_http_requests_total{route,method,status}`
+- `blackice_http_request_duration_ms_bucket{route,method,le}`
+- `blackice_http_request_duration_ms_sum{route,method}`
+- `blackice_http_request_duration_ms_count{route,method}`
+- `blackice_inflight_requests{route}`
+
+Histogram buckets in milliseconds:
+- `5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, +Inf`
 
 Readiness check:
 
