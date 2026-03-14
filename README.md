@@ -419,6 +419,36 @@ curl -sS "http://127.0.0.1:3000/version"
 - OpenClaw Log Explainer integration: `OPENCLAW_LOG_EXPLAINER.md`
 - Phase 2 multi-LXC handoff: `PHASE2_LXC_LOG_EXPOSURE_HANDOFF.md`
 
+## First-time Contributors
+
+If you are new to the repo, read in this order:
+1. `README.md` sections `Install`, `Run`, and `Source Layout`
+2. `src/app.ts` to see how the server is assembled
+3. `src/routes/chatCompletions.ts` and `src/chat/routeResolution.ts` for the main request path
+
+Start here for smaller changes:
+- `src/app.ts`
+- `src/routes/chatCompletions.ts`
+- `src/chat/routeResolution.ts`
+- `src/config/env.ts`
+
+Higher-complexity areas:
+- `src/logExplainer/route.ts`
+- `src/logExplainer/logCollector.ts`
+
+Smallest useful local feedback loop:
+```bash
+pnpm install
+pnpm test
+BLACKICE_CONFIG_FILE=./config/blackice.local.yaml pnpm run dev
+```
+
+More targeted checks when needed:
+- `pnpm run test:unit`
+- `pnpm run test:integration`
+
+For local development, use `./config/blackice.local.yaml`.
+
 ## Versioning And Tags
 - Automatic patch release on PR merge to `main`:
 ```bash
