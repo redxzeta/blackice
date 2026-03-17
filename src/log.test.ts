@@ -10,6 +10,16 @@ afterEach(() => {
 })
 
 describe('log.ts', () => {
+  it('normalizes LOG_LEVEL before enabling debug logging', async () => {
+    vi.stubEnv('LOG_LEVEL', ' DEBUG ')
+    const stdoutWrite = vi.spyOn(process.stdout, 'write').mockReturnValue(true)
+    const { log } = await import('./log.js')
+
+    log.debug('normalized_debug')
+
+    expect(stdoutWrite).toHaveBeenCalledWith(expect.stringContaining('"level":"debug"'))
+  })
+
   it('stores logs in buffer and trims to configured max size', async () => {
     vi.stubEnv('LOG_BUFFER_MAX_ENTRIES', '100')
     const { log, getRecentLogs } = await import('./log.js')
