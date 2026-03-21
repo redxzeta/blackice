@@ -1,6 +1,7 @@
 import { generateText, streamText } from 'ai'
 import { createOllama } from 'ollama-ai-provider-v2'
 import { buildWorkerContractPrompt, sanitizeLLMOutput } from './sanitize.js'
+import { env } from './config/env.js'
 import { getRuntimeConfig } from './config/runtimeConfig.js'
 import { getPolicyFallbackModel } from './ai/modelPolicy.js'
 import { parsePolicySignal } from './ai/policySignal.js'
@@ -18,6 +19,7 @@ function normalizeOllamaBaseURL(input: string): string {
 }
 
 const configuredBaseURL = getRuntimeConfig().ollama.baseUrl
+const configuredModel = getRuntimeConfig().ollama.model
 const baseURL = normalizeOllamaBaseURL(configuredBaseURL)
 
 const ollama = createOllama({
@@ -47,6 +49,108 @@ export type GenerateParams = {
   requestId?: string
   safetyIdentifier?: string
   routeKind?: 'chat' | 'action' | 'debate' | 'observability'
+}
+
+export type ModelAvailabilityResult = {
+  ok: boolean
+  model: string
+  baseUrl: string
+  available: boolean
+  latencyMs: number
+}
+
+export class ModelAvailabilityCheckError extends Error {
+  code: 'upstream_timeout' | 'upstream_unavailable' | 'upstream_error'
+
+  constructor(
+    code: 'upstream_timeout' | 'upstream_unavailable' | 'upstream_error',
+    message: string
+  ) {
+    super(message)
+    this.name = 'ModelAvailabilityCheckError'
+    this.code = code
+  }
+}
+
+function resolveRequestedModel(requestedModel?: string): string {
+  const trimmed = requestedModel?.trim()
+  return trimmed && trimmed.length > 0 ? trimmed : configuredModel
+}
+
+function toModelAvailabilityError(error: unknown): ModelAvailabilityCheckError {
+  if (error instanceof ModelAvailabilityCheckError) {
+    return error
+  }
+
+  if (error instanceof Error && error.name === 'AbortError') {
+    return new ModelAvailabilityCheckError(
+      'upstream_timeout',
+      `Ollama model availability check timed out after ${env.MODEL_PREFLIGHT_TIMEOUT_MS}ms`
+    )
+  }
+
+  return new ModelAvailabilityCheckError(
+    'upstream_error',
+    error instanceof Error ? error.message : String(error)
+  )
+}
+
+export async function checkModelAvailability(
+  requestedModel?: string
+): Promise<ModelAvailabilityResult> {
+  const model = resolveRequestedModel(requestedModel)
+  const started = Date.now()
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), env.MODEL_PREFLIGHT_TIMEOUT_MS)
+
+  try {
+    const response = await fetch(`${baseURL}/tags`, {
+      method: 'GET',
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/json',
+      },
+    })
+
+    if (!response.ok) {
+      throw new ModelAvailabilityCheckError(
+        'upstream_unavailable',
+        `Ollama tags request failed with status ${response.status}`
+      )
+    }
+
+    const payload = (await response.json()) as {
+      models?: Array<{ name?: string; model?: string }>
+    }
+
+    const availableModels = new Set<string>()
+    for (const candidate of payload.models ?? []) {
+      if (typeof candidate.name === 'string' && candidate.name.trim()) {
+        availableModels.add(candidate.name.trim())
+      }
+      if (typeof candidate.model === 'string' && candidate.model.trim()) {
+        availableModels.add(candidate.model.trim())
+      }
+    }
+
+    const available = availableModels.has(model)
+
+    return {
+      ok: available,
+      model,
+      baseUrl: baseURL,
+      available,
+      latencyMs: Date.now() - started,
+    }
+  } catch (error: unknown) {
+    throw toModelAvailabilityError(error)
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+export function getConfiguredOllamaModel(): string {
+  return configuredModel
 }
 
 async function generateWithModel(params: {

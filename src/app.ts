@@ -1,10 +1,12 @@
 import express from 'express'
 import { registerLogExplainerRoutes } from './logExplainer/route.js'
 import { getVersionInfo } from './version.js'
+import { bearerTokenAuthMiddleware } from './http/auth.js'
 import { requestLoggingMiddleware } from './http/requestLogging.js'
 import { registerChatCompletionsRoute } from './routes/chatCompletions.js'
 import { registerPolicyRoutes } from './routes/policy.js'
 import { registerDebateRoutes } from './routes/debate.js'
+import { registerModelRoutes } from './routes/models.js'
 import { registerOpsRoutes } from './routes/ops.js'
 import { checkReadiness, readinessStrict, readinessTimeoutMs } from './readiness.js'
 
@@ -18,11 +20,13 @@ export function createApp(maxActiveDebates: number) {
     res.setHeader('x-blackice-version', versionInfo.version)
     next()
   })
+  app.use(bearerTokenAuthMiddleware)
 
   registerLogExplainerRoutes(app)
   registerChatCompletionsRoute(app)
   registerPolicyRoutes(app)
   registerDebateRoutes(app, maxActiveDebates)
+  registerModelRoutes(app)
   registerOpsRoutes(app, versionInfo)
 
   app.get('/readyz', async (_req, res) => {
