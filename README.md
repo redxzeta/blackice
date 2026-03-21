@@ -289,7 +289,6 @@ curl -sS http://127.0.0.1:3000/analyze/logs/status
 Example response shape:
 ```json
 {
-  "service": "log-explainer",
   "endpoints": [
     "GET /analyze/logs/targets",
     "GET /analyze/logs/status",
@@ -297,7 +296,34 @@ Example response shape:
     "GET /health/loki",
     "POST /analyze/logs",
     "POST /analyze/logs/batch"
-  ]
+  ],
+  "limits": {
+    "maxHours": 168,
+    "maxLinesRequest": 5000,
+    "maxLinesEffectiveCap": 5000,
+    "batchConcurrencyMin": 1,
+    "batchConcurrencyMax": 5,
+    "loki": {
+      "enabled": false,
+      "timeoutMs": 15000,
+      "maxWindowMinutes": 60,
+      "defaultWindowMinutes": 15,
+      "maxLinesCap": 5000,
+      "maxResponseBytes": 1048576,
+      "requireScopeLabels": false
+    }
+  },
+  "targets": {
+    "count": 0,
+    "items": []
+  },
+  "llm": {
+    "baseUrl": "http://127.0.0.1:11434",
+    "model": "llama3.1",
+    "timeoutMs": 45000,
+    "retryAttempts": 2,
+    "retryBackoffMs": 1000
+  }
 }
 ```
 
@@ -309,11 +335,29 @@ curl -sS http://127.0.0.1:3000/analyze/logs/metadata
 Example response shape:
 ```json
 {
-  "service": "log-explainer",
+  "name": "blackice-log-explainer",
+  "version": 1,
+  "description": "Read-only log analysis service for OpenClaw integration",
   "endpoints": {
+    "targets": {
+      "method": "GET",
+      "path": "/analyze/logs/targets"
+    },
+    "status": {
+      "method": "GET",
+      "path": "/analyze/logs/status"
+    },
     "metadata": {
       "method": "GET",
       "path": "/analyze/logs/metadata"
+    },
+    "healthLoki": {
+      "method": "GET",
+      "path": "/health/loki"
+    },
+    "analyze": {
+      "method": "POST",
+      "path": "/analyze/logs"
     },
     "batch": {
       "method": "POST",
@@ -321,7 +365,46 @@ Example response shape:
     }
   },
   "status": {
-    "service": "log-explainer"
+    "endpoints": [
+      "GET /analyze/logs/targets",
+      "GET /analyze/logs/status",
+      "GET /analyze/logs/metadata",
+      "GET /health/loki",
+      "POST /analyze/logs",
+      "POST /analyze/logs/batch"
+    ],
+    "limits": {
+      "maxHours": 168,
+      "maxLinesRequest": 5000,
+      "maxLinesEffectiveCap": 5000,
+      "batchConcurrencyMin": 1,
+      "batchConcurrencyMax": 5,
+      "loki": {
+        "enabled": false,
+        "timeoutMs": 15000,
+        "maxWindowMinutes": 60,
+        "defaultWindowMinutes": 15,
+        "maxLinesCap": 5000,
+        "maxResponseBytes": 1048576,
+        "requireScopeLabels": false
+      }
+    },
+    "targets": {
+      "count": 0,
+      "items": []
+    },
+    "llm": {
+      "baseUrl": "http://127.0.0.1:11434",
+      "model": "llama3.1",
+      "timeoutMs": 45000,
+      "retryAttempts": 2,
+      "retryBackoffMs": 1000
+    }
+  },
+  "schemas": {
+    "analyzeLogsTargetsResponse": {},
+    "analyzeLogsResponse": {},
+    "analyzeLogsBatchResponse": {}
   }
 }
 ```
