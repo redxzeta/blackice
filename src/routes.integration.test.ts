@@ -14,6 +14,8 @@ describe('integration routes', () => {
     vi.unstubAllGlobals()
     vi.unstubAllEnvs()
     vi.restoreAllMocks()
+    vi.doUnmock('./logExplainer/logCollector.js')
+    vi.doUnmock('./logExplainer/ollamaClient.js')
   })
 
   it('GET /healthz returns ok', async () => {
@@ -220,6 +222,41 @@ describe('integration routes', () => {
 
     expect(res.status).toBe(400)
     expect(res.body.error).toBeDefined()
+  })
+
+  it('POST /analyze/logs redacts secrets before prompting and before responding', async () => {
+    vi.doMock('./logExplainer/logCollector.js', () => ({
+      checkLokiHealth: vi.fn(),
+      collectLogs: vi.fn(async () => 'authorization: Bearer prompt-secret'),
+      collectLokiBatchLogs: vi.fn(),
+      ensureLokiRulesConfigured: vi.fn(),
+      getLokiSyntheticTargets: vi.fn(() => []),
+    }))
+    vi.doMock('./logExplainer/ollamaClient.js', () => ({
+      analyzeLogsWithOllama: vi.fn(async ({ userPrompt }: { userPrompt: string }) => {
+        expect(userPrompt).not.toContain('prompt-secret')
+        expect(userPrompt).toContain('[REDACTED]')
+        return 'Summary\nauthorization: Bearer response-secret'
+      }),
+    }))
+
+    const { createApp } = await import('./app.js')
+    const app = createApp(1)
+
+    const res = await request(app).post('/analyze/logs').send({
+      source: 'journald',
+      target: 'ssh.service',
+      hours: 1,
+      maxLines: 20,
+    })
+
+    expect(res.status).toBe(200)
+    expect(res.body.analysis).toContain('Bearer [REDACTED]')
+    expect(res.body.analysis).not.toContain('response-secret')
+    expect(res.body.safety).toEqual({
+      redacted: true,
+      reasons: expect.arrayContaining(['bearer_token']),
+    })
   })
 
   it('GET /analyze/logs/metadata stays aligned with status endpoint list', async () => {

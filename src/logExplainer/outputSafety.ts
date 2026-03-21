@@ -22,11 +22,24 @@ const FORBIDDEN_PATTERNS: RegExp[] = [
   /\bufw\s+(?:enable|disable|reset|allow|deny|reject|limit|delete|reload)\b/i,
 ]
 
-const EVIDENCE_REDACTION_RULES: Array<{ pattern: RegExp; replacement: string }> = [
-  { pattern: /\b(Bearer)\s+[A-Za-z0-9._~+/=-]+/gi, replacement: '$1 [REDACTED]' },
-  { pattern: /(\bauthorization\b\s*[=:]\s*Bearer\s+)(\S+)/gi, replacement: '$1[REDACTED]' },
-  { pattern: /(\b(?:authorization|x-api-key)\b\s*:\s*)(\S+)/gi, replacement: '$1[REDACTED]' },
+const SECRET_REDACTION_RULES: Array<{ name: string; pattern: RegExp; replacement: string }> = [
   {
+    name: 'authorization_header',
+    pattern: /(\bauthorization\b\s*[=:]\s+)(?!Bearer\b|\[REDACTED\])[^\r\n]+/gi,
+    replacement: '$1[REDACTED]',
+  },
+  {
+    name: 'bearer_token',
+    pattern: /\b(Bearer)\s+[A-Za-z0-9._~+/=-]+/gi,
+    replacement: '$1 [REDACTED]',
+  },
+  {
+    name: 'api_key_header',
+    pattern: /(\bx-api-key\b\s*:\s*)(\S+)/gi,
+    replacement: '$1[REDACTED]',
+  },
+  {
+    name: 'secret_assignment',
     pattern: /(\b(?:api[_-]?key|token|access[_-]?token|password|passwd|secret)\b\s*[=:]\s*)(\S+)/gi,
     replacement: '$1[REDACTED]',
   },
@@ -53,6 +66,29 @@ function linePrefixForRedaction(line: string): string {
     return ''
   }
   return match[1]
+}
+
+export function redactSecrets(text: string): {
+  text: string
+  redacted: boolean
+  reasons: string[]
+} {
+  let sanitized = text
+  const reasons = new Set<string>()
+
+  for (const rule of SECRET_REDACTION_RULES) {
+    const next = sanitized.replace(rule.pattern, rule.replacement)
+    if (next !== sanitized) {
+      reasons.add(rule.name)
+      sanitized = next
+    }
+  }
+
+  return {
+    text: sanitized,
+    redacted: sanitized !== text,
+    reasons: Array.from(reasons),
+  }
 }
 
 export function sanitizeReadOnlyAnalysisOutput(analysis: string): {
@@ -107,9 +143,5 @@ export function sanitizeReadOnlyAnalysisOutput(analysis: string): {
 }
 
 export function sanitizeReadOnlyEvidenceLine(line: string): string {
-  let sanitized = line
-  for (const rule of EVIDENCE_REDACTION_RULES) {
-    sanitized = sanitized.replace(rule.pattern, rule.replacement)
-  }
-  return sanitized
+  return redactSecrets(line).text
 }

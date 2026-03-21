@@ -1,0 +1,60 @@
+import { describe, expect, it } from 'vitest'
+
+import {
+  redactSecrets,
+  sanitizeReadOnlyAnalysisOutput,
+  sanitizeReadOnlyEvidenceLine,
+} from './outputSafety.js'
+
+describe('log explainer output safety', () => {
+  it('redacts common secret formats', () => {
+    const input = [
+      'authorization: Bearer abc123',
+      'Authorization: Basic Zm9vOmJhcg==',
+      'bearer lower-case-token',
+      'BEARER upper-case-token',
+      'x-api-key: secret-key',
+      'token=my-token',
+      'password: hunter2',
+    ].join('\n')
+
+    const result = redactSecrets(input)
+
+    expect(result.redacted).toBe(true)
+    expect(result.text).not.toContain('abc123')
+    expect(result.text).not.toContain('Zm9vOmJhcg==')
+    expect(result.text).not.toContain('lower-case-token')
+    expect(result.text).not.toContain('upper-case-token')
+    expect(result.text).not.toContain('secret-key')
+    expect(result.text).not.toContain('my-token')
+    expect(result.text).not.toContain('hunter2')
+    expect(result.reasons).toEqual(
+      expect.arrayContaining([
+        'authorization_header',
+        'bearer_token',
+        'api_key_header',
+        'secret_assignment',
+      ])
+    )
+  })
+
+  it('redacts secrets in evidence lines', () => {
+    expect(sanitizeReadOnlyEvidenceLine('authorization: Bearer abc123')).toBe(
+      'authorization: Bearer [REDACTED]'
+    )
+    expect(sanitizeReadOnlyEvidenceLine('Authorization: Basic Zm9vOmJhcg==')).toBe(
+      'Authorization: [REDACTED]'
+    )
+    expect(sanitizeReadOnlyEvidenceLine('BEARER upper-case-token')).toBe('BEARER [REDACTED]')
+  })
+
+  it('removes unsafe commands from analysis output', () => {
+    const result = sanitizeReadOnlyAnalysisOutput(
+      ['## Recommended Next Safe Checks', '- sudo systemctl restart ssh'].join('\n')
+    )
+
+    expect(result.redacted).toBe(true)
+    expect(result.analysis).toContain('Safety Note')
+    expect(result.analysis).toContain('[REDACTED unsafe remediation command removed]')
+  })
+})
