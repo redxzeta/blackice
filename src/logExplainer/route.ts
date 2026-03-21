@@ -18,6 +18,7 @@ import {
   collectLogs,
   collectLokiBatchLogs,
   ensureLokiRulesConfigured,
+  getLokiDiscovery,
   getLokiSyntheticTargets,
 } from './logCollector.js'
 import { analyzeLogsWithOllama } from './ollamaClient.js'
@@ -432,7 +433,8 @@ export function registerLogExplainerRoutes(app: Express): void {
     try {
       ensureLokiRulesConfigured()
       const targets = [...getLokiSyntheticTargets()]
-      const body = AnalyzeLogsTargetsResponseSchema.parse({ targets })
+      const discovery = getLokiDiscovery()
+      const body = AnalyzeLogsTargetsResponseSchema.parse({ targets, discovery })
       res.status(200).json(body)
     } catch (error: unknown) {
       const httpError = toHttpError(error)
