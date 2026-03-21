@@ -12,6 +12,7 @@ describe('integration routes', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
     vi.restoreAllMocks()
     vi.doUnmock('./logExplainer/logCollector.js')
     vi.doUnmock('./logExplainer/ollamaClient.js')
@@ -26,6 +27,141 @@ describe('integration routes', () => {
     expect(res.status).toBe(200)
     expect(res.body).toEqual({ ok: true })
     expect(res.headers['x-blackice-version']).toBeDefined()
+  })
+
+  it('API auth stays disabled when API_TOKEN is unset', async () => {
+    const { createApp } = await import('./app.js')
+    const app = createApp(1)
+
+    const res = await request(app)
+      .post('/v1/chat/completions')
+      .send({
+        model: 'router/default',
+        messages: [
+          {
+            role: 'user',
+            content: '{"action":"healthcheck","input":"","options":{}}',
+          },
+        ],
+      })
+
+    expect(res.status).toBe(200)
+    expect(JSON.stringify(res.body)).toContain('ok-healthcheck')
+  })
+
+  it('API auth returns 401 when bearer token is missing', async () => {
+    vi.stubEnv('API_TOKEN', 'supersecret')
+
+    const { createApp } = await import('./app.js')
+    const app = createApp(1)
+
+    const res = await request(app)
+      .post('/v1/chat/completions')
+      .send({
+        model: 'router/default',
+        messages: [
+          {
+            role: 'user',
+            content: '{"action":"healthcheck","input":"","options":{}}',
+          },
+        ],
+      })
+
+    expect(res.status).toBe(401)
+    expect(res.body).toEqual({
+      error: {
+        message: 'Unauthorized',
+        type: 'authentication_error',
+      },
+    })
+  })
+
+  it('API auth returns 403 when bearer token is wrong', async () => {
+    vi.stubEnv('API_TOKEN', 'supersecret')
+
+    const { createApp } = await import('./app.js')
+    const app = createApp(1)
+
+    const res = await request(app)
+      .post('/v1/chat/completions')
+      .set('Authorization', 'Bearer wrongtoken')
+      .send({
+        model: 'router/default',
+        messages: [
+          {
+            role: 'user',
+            content: '{"action":"healthcheck","input":"","options":{}}',
+          },
+        ],
+      })
+
+    expect(res.status).toBe(403)
+    expect(res.body).toEqual({
+      error: {
+        message: 'Unauthorized',
+        type: 'authentication_error',
+      },
+    })
+  })
+
+  it('API auth allows exempt paths and honors AUTH_EXEMPT_PATHS', async () => {
+    vi.stubEnv('API_TOKEN', 'supersecret')
+    vi.stubEnv('AUTH_EXEMPT_PATHS', '/healthz,/v1/models/check')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          models: [{ name: 'qwen2.5:14b' }],
+        }),
+      })
+    )
+
+    const { createApp } = await import('./app.js')
+    const app = createApp(1)
+
+    const [healthRes, modelsRes] = await Promise.all([
+      request(app).get('/healthz'),
+      request(app).get('/v1/models/check'),
+    ])
+
+    expect(healthRes.status).toBe(200)
+    expect(modelsRes.status).toBe(200)
+  })
+
+  it('API auth treats exempt paths with trailing slashes as equivalent', async () => {
+    vi.stubEnv('API_TOKEN', 'supersecret')
+
+    const { createApp } = await import('./app.js')
+    const app = createApp(1)
+
+    const res = await request(app).get('/healthz/')
+
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({ ok: true })
+  })
+
+  it('API auth allows requests with the correct bearer token', async () => {
+    vi.stubEnv('API_TOKEN', 'supersecret')
+
+    const { createApp } = await import('./app.js')
+    const app = createApp(1)
+
+    const res = await request(app)
+      .post('/v1/chat/completions')
+      .set('Authorization', 'Bearer supersecret')
+      .send({
+        model: 'router/default',
+        messages: [
+          {
+            role: 'user',
+            content: '{"action":"healthcheck","input":"","options":{}}',
+          },
+        ],
+      })
+
+    expect(res.status).toBe(200)
+    expect(JSON.stringify(res.body)).toContain('ok-healthcheck')
   })
 
   it('POST /v1/chat/completions supports action happy path', async () => {
@@ -144,6 +280,106 @@ describe('integration routes', () => {
     expect(metadataPaths.sort()).toEqual([...statusRes.body.endpoints].sort())
   })
 
+  it('POST /analyze/logs enforces per client rate limits with retry guidance and telemetry', async () => {
+    vi.doMock('./logExplainer/logCollector.js', () => ({
+      checkLokiHealth: vi.fn(),
+      collectLogs: vi.fn(async () => 'line 1'),
+      collectLokiBatchLogs: vi.fn(),
+      ensureLokiRulesConfigured: vi.fn(),
+      getLokiSyntheticTargets: vi.fn(() => []),
+    }))
+    vi.doMock('./logExplainer/ollamaClient.js', () => ({
+      analyzeLogsWithOllama: vi.fn(async () => 'ok'),
+    }))
+
+    const { createApp } = await import('./app.js')
+    const { getRecentLogs } = await import('./log.js')
+    const app = createApp(1)
+    const payload = {
+      source: 'journald',
+      target: 'ssh.service',
+      hours: 1,
+      maxLines: 20,
+    }
+
+    for (let i = 0; i < 5; i += 1) {
+      const okRes = await request(app)
+        .post('/analyze/logs')
+        .set('x-forwarded-for', `198.51.100.${10 + i}`)
+        .send(payload)
+      expect(okRes.status).toBe(200)
+    }
+
+    const limitedRes = await request(app)
+      .post('/analyze/logs')
+      .set('x-forwarded-for', '203.0.113.200')
+      .send(payload)
+
+    expect(limitedRes.status).toBe(429)
+    expect(limitedRes.body).toEqual({
+      error: 'Rate limit exceeded',
+      type: 'rate_limit_exceeded',
+      path: '/analyze/logs',
+      retryAfterSeconds: expect.any(Number),
+    })
+    expect(Number(limitedRes.headers['retry-after'])).toBeGreaterThanOrEqual(1)
+    expect(limitedRes.headers['x-ratelimit-limit']).toBe('5')
+    expect(limitedRes.headers['x-ratelimit-remaining']).toBe('0')
+
+    expect(getRecentLogs()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          msg: 'log_explainer_rate_limit_hit',
+          fields: expect.objectContaining({
+            path: '/analyze/logs',
+            client: expect.stringMatching(/^(::1|::ffff:127\.0\.0\.1|127\.0\.0\.1)$/),
+            limit: 5,
+          }),
+        }),
+      ])
+    )
+  })
+
+  it('POST /analyze/logs/batch uses a stricter limit than single target analysis', async () => {
+    vi.doMock('./logExplainer/logCollector.js', () => ({
+      checkLokiHealth: vi.fn(),
+      collectLogs: vi.fn(async () => 'line 1'),
+      collectLokiBatchLogs: vi.fn(),
+      ensureLokiRulesConfigured: vi.fn(),
+      getLokiSyntheticTargets: vi.fn(() => []),
+    }))
+    vi.doMock('./logExplainer/ollamaClient.js', () => ({
+      analyzeLogsWithOllama: vi.fn(async () => 'ok'),
+    }))
+
+    const { createApp } = await import('./app.js')
+    const app = createApp(1)
+    const payload = {
+      source: 'journald',
+      targets: ['ssh.service'],
+      hours: 1,
+      maxLines: 20,
+      concurrency: 1,
+    }
+
+    for (let i = 0; i < 2; i += 1) {
+      const okRes = await request(app)
+        .post('/analyze/logs/batch')
+        .set('x-forwarded-for', `198.51.100.${20 + i}`)
+        .send(payload)
+      expect(okRes.status).toBe(200)
+    }
+
+    const limitedRes = await request(app)
+      .post('/analyze/logs/batch')
+      .set('x-forwarded-for', '203.0.113.201')
+      .send(payload)
+
+    expect(limitedRes.status).toBe(429)
+    expect(limitedRes.body.path).toBe('/analyze/logs/batch')
+    expect(limitedRes.headers['x-ratelimit-limit']).toBe('2')
+  })
+
   it('GET /v1/models/check returns availability for the configured model', async () => {
     vi.stubGlobal(
       'fetch',
@@ -192,6 +428,27 @@ describe('integration routes', () => {
       available: false,
       error: 'model_not_found',
     })
+  })
+
+  it('GET /metrics exposes Prometheus text when enabled', async () => {
+    vi.stubEnv('METRICS_ENABLED', '1')
+    vi.stubEnv('METRICS_EXPOSE_PATH', '/metrics')
+
+    const { createApp } = await import('./app.js')
+    const app = createApp(1)
+
+    const metricsRes = await request(app).get('/metrics')
+    expect(metricsRes.status).toBe(200)
+    expect(metricsRes.headers['content-type']).toContain('text/plain')
+    expect(metricsRes.text).toContain('# TYPE blackice_http_requests_total counter')
+
+    const healthRes = await request(app).get('/healthz')
+    expect(healthRes.status).toBe(200)
+
+    const metricsAfterTraffic = await request(app).get('/metrics')
+    expect(metricsAfterTraffic.text).toContain(
+      'blackice_http_requests_total{route="/healthz",method="GET",status="200"} 1'
+    )
   })
 
   it('GET /v1/models/check returns 504 when the upstream probe times out', async () => {
