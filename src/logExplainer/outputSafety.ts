@@ -24,14 +24,14 @@ const FORBIDDEN_PATTERNS: RegExp[] = [
 
 const SECRET_REDACTION_RULES: Array<{ name: string; pattern: RegExp; replacement: string }> = [
   {
+    name: 'authorization_header',
+    pattern: /(\bauthorization\b\s*[=:]\s+)(?!Bearer\b|\[REDACTED\])[^\r\n]+/gi,
+    replacement: '$1[REDACTED]',
+  },
+  {
     name: 'bearer_token',
     pattern: /\b(Bearer)\s+[A-Za-z0-9._~+/=-]+/gi,
     replacement: '$1 [REDACTED]',
-  },
-  {
-    name: 'authorization_header',
-    pattern: /(\bauthorization\b\s*[=:]\s*)(\S+)(?:\s+\S+)?/gi,
-    replacement: '$1$2 [REDACTED]',
   },
   {
     name: 'api_key_header',

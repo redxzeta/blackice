@@ -12,6 +12,7 @@ describe('log explainer output safety', () => {
       'authorization: Bearer abc123',
       'Authorization: Basic Zm9vOmJhcg==',
       'bearer lower-case-token',
+      'BEARER upper-case-token',
       'x-api-key: secret-key',
       'token=my-token',
       'password: hunter2',
@@ -23,6 +24,7 @@ describe('log explainer output safety', () => {
     expect(result.text).not.toContain('abc123')
     expect(result.text).not.toContain('Zm9vOmJhcg==')
     expect(result.text).not.toContain('lower-case-token')
+    expect(result.text).not.toContain('upper-case-token')
     expect(result.text).not.toContain('secret-key')
     expect(result.text).not.toContain('my-token')
     expect(result.text).not.toContain('hunter2')
@@ -39,6 +41,12 @@ describe('log explainer output safety', () => {
   it('redacts secrets in evidence lines', () => {
     expect(sanitizeReadOnlyEvidenceLine('authorization: Bearer abc123')).toBe(
       'authorization: Bearer [REDACTED]'
+    )
+    expect(sanitizeReadOnlyEvidenceLine('Authorization: Basic Zm9vOmJhcg==')).toBe(
+      'Authorization: [REDACTED]'
+    )
+    expect(sanitizeReadOnlyEvidenceLine('BEARER upper-case-token')).toBe(
+      'BEARER [REDACTED]'
     )
   })
 
