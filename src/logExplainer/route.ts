@@ -537,15 +537,15 @@ export function registerLogExplainerRoutes(app: Express): void {
           )
 
           if (mode === 'raw') {
+            const hasLogs = collected.logs.trim().length > 0;
             result = {
               target: collected.query,
               ok: true,
               ...(modeInfo.legacyCollectOnly ? { logs: collected.logs } : {}),
+              ...(hasLogs ? {} : { no_logs: true }),
               evidence,
-              message: collected.logs.trim()
-                ? 'Logs collected (raw mode)'
-                : 'No logs collected (raw mode)',
-            }
+              message: hasLogs ? 'Logs collected (raw mode)' : 'No logs collected (raw mode)'
+            };
           } else if (mode === 'both') {
             const analysisRequest: AnalyzePromptRequest = {
               source: 'loki',
@@ -642,15 +642,15 @@ export function registerLogExplainerRoutes(app: Express): void {
           )
 
           if (mode === 'raw') {
+            const hasLogs = rawLogs.trim().length > 0;
             return {
               target,
               ok: true,
               ...(modeInfo.legacyCollectOnly ? { logs: rawLogs } : {}),
+              ...(hasLogs ? {} : { no_logs: true }),
               evidence,
-              message: rawLogs.trim()
-                ? 'Logs collected (raw mode)'
-                : 'No logs collected (raw mode)',
-            }
+              message: hasLogs ? 'Logs collected (raw mode)' : 'No logs collected (raw mode)'
+            };
           }
 
           const analysisResult = await analyzeFromRawLogs(analysisRequest, rawLogs, {
