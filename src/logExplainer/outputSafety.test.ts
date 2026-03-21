@@ -45,9 +45,7 @@ describe('log explainer output safety', () => {
     expect(sanitizeReadOnlyEvidenceLine('Authorization: Basic Zm9vOmJhcg==')).toBe(
       'Authorization: [REDACTED]'
     )
-    expect(sanitizeReadOnlyEvidenceLine('BEARER upper-case-token')).toBe(
-      'BEARER [REDACTED]'
-    )
+    expect(sanitizeReadOnlyEvidenceLine('BEARER upper-case-token')).toBe('BEARER [REDACTED]')
   })
 
   it('removes unsafe commands from analysis output', () => {
