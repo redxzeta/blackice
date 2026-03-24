@@ -5,6 +5,7 @@ import {
   BATCH_EVIDENCE_LINES_MAX,
   AnalyzeLogsBatchRequestSchema,
   AnalyzeLogsBatchResponseSchema,
+  AnalyzeLogsMetadataResponseSchema,
   AnalyzeLogsRequestSchema,
   AnalyzeLogsResponseSchema,
   AnalyzeLogsTargetsResponseSchema,
@@ -30,6 +31,7 @@ import {
 } from './promptTemplates.js'
 import {
   ensureReadOnlyAnalysisOutput,
+  redactSecrets,
   sanitizeReadOnlyAnalysisOutput,
   sanitizeReadOnlyEvidenceLine,
 } from './outputSafety.js'
@@ -372,7 +374,15 @@ async function analyzeFromRawLogs(
     }
   }
 
-  const { text: logs, truncated } = truncateLogs(rawLogs)
+  const promptRedaction = redactSecrets(rawLogs)
+  if (promptRedaction.redacted) {
+    log.info('log_explainer_prompt_redacted', {
+      requestId: ctx.requestId,
+      reasons: promptRedaction.reasons,
+    })
+  }
+
+  const { text: logs, truncated } = truncateLogs(promptRedaction.text)
   const userPrompt = buildUserPrompt({ ...request, logs, truncated })
   const analysis = await analyzeLogsWithOllama({
     systemPrompt: SYSTEM_PROMPT,
@@ -382,20 +392,25 @@ async function analyzeFromRawLogs(
   })
 
   const safety = ensureReadOnlyAnalysisOutput(analysis)
-  if (!safety.safe) {
-    const sanitized = sanitizeReadOnlyAnalysisOutput(analysis)
+  const unsafeOutput = !safety.safe ? sanitizeReadOnlyAnalysisOutput(analysis) : null
+  const secretRedaction = redactSecrets(unsafeOutput?.analysis ?? analysis)
 
+  const redactedReasons = [...(unsafeOutput?.reasons ?? []), ...secretRedaction.reasons]
+  const redacted = Boolean(unsafeOutput?.redacted || secretRedaction.redacted)
+
+  if (redacted) {
     log.info('log_explainer_output_redacted', {
-      reason: safety.reason,
-      redacted: sanitized.redacted,
-      reasons: sanitized.reasons,
+      requestId: ctx.requestId,
+      reason: safety.safe ? undefined : safety.reason,
+      redacted,
+      reasons: redactedReasons,
     })
 
     return {
-      analysis: sanitized.analysis,
+      analysis: secretRedaction.text,
       safety: {
-        redacted: sanitized.redacted,
-        reasons: sanitized.reasons,
+        redacted,
+        reasons: redactedReasons,
       },
     }
   }
@@ -453,8 +468,7 @@ export function registerLogExplainerRoutes(app: Express): void {
 
   app.get('/analyze/logs/metadata', (_req: Request, res: Response) => {
     const status = buildLogExplainerStatus()
-
-    res.status(200).json({
+    const body = AnalyzeLogsMetadataResponseSchema.parse({
       name: 'blackice-log-explainer',
       version: 1,
       description: 'Read-only log analysis service for OpenClaw integration',
@@ -462,6 +476,8 @@ export function registerLogExplainerRoutes(app: Express): void {
       status,
       schemas: LogExplainerJsonSchemas,
     })
+
+    res.status(200).json(body)
   })
 
   app.post('/analyze/logs/batch', async (req: Request, res: Response) => {

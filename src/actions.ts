@@ -1,15 +1,11 @@
-import { execFile } from 'node:child_process'
 import os from 'node:os'
-import path from 'node:path'
-import { promises as fs } from 'node:fs'
-import { promisify } from 'node:util'
 import type { ActionEnvelope } from './schema.js'
 import { runWorkerText } from './ollama.js'
 import { chooseActionModel } from './router.js'
-
-const execFileAsync = promisify(execFile)
+import { isPathWithinAllowlist, runBoundedCommand } from './safety.js'
 const ACTIONS_ENABLED = (process.env.ACTIONS_ENABLED ?? 'true').toLowerCase() === 'true'
 const COMMAND_TIMEOUT_MS = 4_000
+const COMMAND_MAX_BYTES = 1024 * 1024
 
 const allowlistedLogEntries = (
   process.env.ALLOWLIST_LOG_PATHS ?? '/var/log/syslog,/var/log/auth.log'
@@ -29,12 +25,10 @@ type ActionExecutionMetadata = {
 }
 
 async function runSafeCmd(file: string, args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync(file, args, {
-    timeout: COMMAND_TIMEOUT_MS,
-    maxBuffer: 1024 * 1024,
-    windowsHide: true,
+  return runBoundedCommand(file, args, {
+    timeoutMs: COMMAND_TIMEOUT_MS,
+    maxBytes: COMMAND_MAX_BYTES,
   })
-  return stdout.trim()
 }
 
 async function runSummaryAction(
@@ -102,31 +96,7 @@ async function listServices(options: Record<string, unknown>): Promise<string> {
 }
 
 async function pathIsAllowlisted(requestedPath: string): Promise<boolean> {
-  let realRequested: string
-  try {
-    realRequested = await fs.realpath(requestedPath)
-  } catch {
-    return false
-  }
-
-  for (const entry of allowlistedLogEntries) {
-    try {
-      const realAllowed = await fs.realpath(entry)
-      const stat = await fs.stat(realAllowed)
-      if (stat.isDirectory()) {
-        const normalized = realAllowed.endsWith(path.sep)
-          ? realAllowed
-          : `${realAllowed}${path.sep}`
-        if (realRequested.startsWith(normalized)) {
-          return true
-        }
-      } else if (realRequested === realAllowed) {
-        return true
-      }
-    } catch {}
-  }
-
-  return false
+  return isPathWithinAllowlist(requestedPath, allowlistedLogEntries)
 }
 
 async function tailLog(options: Record<string, unknown>): Promise<string> {
