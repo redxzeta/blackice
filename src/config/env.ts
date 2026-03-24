@@ -51,14 +51,10 @@ const logLevelSchema = z.preprocess(
 )
 
 const envSchema = z.object({
-  PORT: z.coerce.number().int().default(3000),
-  DEBATE_MAX_CONCURRENT: z.coerce.number().int().min(1).max(100).default(1),
   MODEL_PREFLIGHT_ON_START: booleanFlagSchema.default(false),
   MODEL_PREFLIGHT_TIMEOUT_MS: boundedIntSchema(200, 10_000, 2000),
 
   LOG_LEVEL: logLevelSchema,
-  LOG_BUFFER_MAX_ENTRIES: z.coerce.number().int().min(100).max(10_000).default(2000),
-  OPS_ENABLED: booleanFlagSchema.default(false),
   METRICS_ENABLED: booleanFlagSchema.default(true),
   METRICS_EXPOSE_PATH: z.string().trim().min(1).default('/metrics'),
 })

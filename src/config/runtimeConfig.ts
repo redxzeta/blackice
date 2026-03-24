@@ -4,12 +4,21 @@ import { parse as parseYaml } from 'yaml'
 import { z } from 'zod'
 
 const DEFAULT_CONFIG_FILE = './config/blackice.local.yaml'
+const DEFAULT_SERVER_PORT = 3000
+const DEFAULT_READINESS_TIMEOUT_MS = 1_500
+const MIN_READINESS_TIMEOUT_MS = 100
+const MAX_READINESS_TIMEOUT_MS = 10_000
+const DEFAULT_READINESS_STRICT = true
+const DEFAULT_OPS_ENABLED = false
+const DEFAULT_LOG_BUFFER_MAX_ENTRIES = 2_000
 const DEFAULT_LOG_COLLECTION_TIMEOUT_MS = 15_000
 const DEFAULT_MAX_COMMAND_BYTES = 2_000_000
 const DEFAULT_MAX_QUERY_HOURS = 168
 const DEFAULT_MAX_LINES_CAP = 2_000
 const DEFAULT_MAX_CONCURRENCY = 5
 const DEFAULT_MAX_LOG_CHARS = 40_000
+const DEFAULT_DEBATE_MAX_CONCURRENT = 1
+const DEFAULT_DEBATE_MODEL_ALLOWLIST = ['llama3.1:8b', 'qwen2.5:14b', 'qwen2.5-coder:14b']
 const DEFAULT_OLLAMA_BASE_URL = 'http://192.168.1.230:11434'
 const DEFAULT_OLLAMA_MODEL = 'qwen2.5:14b'
 const DEFAULT_OLLAMA_TIMEOUT_MS = 45_000
@@ -19,9 +28,36 @@ const DEFAULT_LOKI_MAX_WINDOW_MINUTES = 60
 const DEFAULT_LOKI_DEFAULT_WINDOW_MINUTES = 15
 const DEFAULT_LOKI_REQUIRE_SCOPE_LABELS = true
 
+function clampInt(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value))
+}
+
 const YamlConfigSchema = z
   .object({
     version: z.number().int().positive().optional(),
+    server: z
+      .object({
+        port: z.number().int().positive().optional(),
+      })
+      .optional(),
+    readiness: z
+      .object({
+        timeoutMs: z.number().int().positive().optional(),
+        strict: z.boolean().optional(),
+      })
+      .optional(),
+    ops: z
+      .object({
+        enabled: z.boolean().optional(),
+        logBufferMaxEntries: z.number().int().min(100).max(10_000).optional(),
+      })
+      .optional(),
+    debate: z
+      .object({
+        maxConcurrent: z.number().int().min(1).max(100).optional(),
+        modelAllowlist: z.array(z.string().trim().min(1)).optional(),
+      })
+      .optional(),
     ollama: z
       .object({
         baseUrl: z.string().trim().optional(),
@@ -59,6 +95,21 @@ const YamlConfigSchema = z
 const RuntimeConfigSchema = z
   .object({
     configFile: z.string().min(1),
+    server: z.object({
+      port: z.number().int().positive(),
+    }),
+    readiness: z.object({
+      timeoutMs: z.number().int().min(MIN_READINESS_TIMEOUT_MS).max(MAX_READINESS_TIMEOUT_MS),
+      strict: z.boolean(),
+    }),
+    ops: z.object({
+      enabled: z.boolean(),
+      logBufferMaxEntries: z.number().int().min(100).max(10_000),
+    }),
+    debate: z.object({
+      maxConcurrent: z.number().int().min(1).max(100),
+      modelAllowlist: z.array(z.string().min(1)).min(1),
+    }),
     ollama: z.object({
       baseUrl: z.string().min(1),
       model: z.string().min(1),
@@ -114,10 +165,39 @@ export function getRuntimeConfig(): RuntimeConfig {
   const configFile = path.resolve(configFileRaw)
   const yamlConfig = loadYamlConfig(configFile)
 
+  const serverYaml = yamlConfig.server ?? {}
+  const readinessYaml = yamlConfig.readiness ?? {}
+  const opsYaml = yamlConfig.ops ?? {}
+  const debateYaml = yamlConfig.debate ?? {}
   const ollamaYaml = yamlConfig.ollama ?? {}
   const lokiYaml = yamlConfig.loki ?? {}
   const limitsYaml = yamlConfig.limits ?? {}
   const configDir = path.dirname(configFile)
+
+  const server = {
+    port: serverYaml.port ?? DEFAULT_SERVER_PORT,
+  }
+
+  const readiness = {
+    timeoutMs: clampInt(
+      readinessYaml.timeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS,
+      MIN_READINESS_TIMEOUT_MS,
+      MAX_READINESS_TIMEOUT_MS
+    ),
+    strict: readinessYaml.strict ?? DEFAULT_READINESS_STRICT,
+  }
+
+  const ops = {
+    enabled: opsYaml.enabled ?? DEFAULT_OPS_ENABLED,
+    logBufferMaxEntries: opsYaml.logBufferMaxEntries ?? DEFAULT_LOG_BUFFER_MAX_ENTRIES,
+  }
+
+  const debate = {
+    maxConcurrent: debateYaml.maxConcurrent ?? DEFAULT_DEBATE_MAX_CONCURRENT,
+    modelAllowlist:
+      debateYaml.modelAllowlist?.map((model) => model.trim()).filter(Boolean) ??
+      DEFAULT_DEBATE_MODEL_ALLOWLIST,
+  }
 
   const limits = {
     logCollectionTimeoutMs: limitsYaml.logCollectionTimeoutMs ?? DEFAULT_LOG_COLLECTION_TIMEOUT_MS,
@@ -152,12 +232,15 @@ export function getRuntimeConfig(): RuntimeConfig {
     rulesFile,
   }
 
-  cachedRuntimeConfig = {
+  cachedRuntimeConfig = RuntimeConfigSchema.parse({
     configFile,
+    server,
+    readiness,
+    ops,
+    debate,
     ollama,
     loki,
     limits,
-  }
-  cachedRuntimeConfig = RuntimeConfigSchema.parse(cachedRuntimeConfig)
+  })
   return cachedRuntimeConfig
 }

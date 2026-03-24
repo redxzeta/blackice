@@ -37,7 +37,6 @@ pnpm run build
 
 ## Run
 ```bash
-PORT=3000 \
 BLACKICE_CONFIG_FILE=./config/blackice.local.yaml \
 ACTIONS_ENABLED=true \
 LOG_LEVEL=info \
@@ -67,8 +66,8 @@ pnpm run dev
 - `GET /analyze/logs/status`
 - `GET /analyze/logs/metadata`
 - `POST /v1/policy/dry-run`
-- `GET /logs/recent` *(requires `OPS_ENABLED=1`)*
-- `GET /logs/metrics` *(requires `OPS_ENABLED=1`)*
+- `GET /logs/recent` *(requires `ops.enabled: true` in the selected YAML config)*
+- `GET /logs/metrics` *(requires `ops.enabled: true` in the selected YAML config)*
 - `GET /metrics` *(requires `METRICS_ENABLED=1`, default enabled; path configurable via `METRICS_EXPOSE_PATH`)*
 - `GET /version`
 - `GET /healthz`
@@ -111,28 +110,37 @@ Security controls:
 Runtime and log collection settings are loaded from `BLACKICE_CONFIG_FILE` YAML. The old per setting environment variables for log explainer and Ollama tuning are no longer the active interface.
 
 Top level environment variables:
-- `PORT` (default: `3000`)
 - `BLACKICE_CONFIG_FILE` (default: `./config/blackice.local.yaml`; use `./config/blackice.e2e.yaml` or `./config/blackice.prod.yaml`)
 - `API_TOKEN` (optional; when set, all non exempt API routes require `Authorization: Bearer <token>`)
 - `AUTH_EXEMPT_PATHS` (optional CSV; defaults to `/healthz,/readyz,/version`)
 - `ACTIONS_ENABLED` (`true` or `false`, default `true`)
 - `LOG_LEVEL` (`info` or `debug`, default `info`)
 - `ALLOWLIST_LOG_PATHS` (comma separated absolute files or directories; defaults to `/var/log/syslog,/var/log/auth.log` for `tail_log`)
-- `DEBATE_MODEL_ALLOWLIST` (comma separated model IDs allowed for `/v1/debate`)
-- `DEBATE_MAX_CONCURRENT` (default `1`; max active `/v1/debate` requests)
-- `LOG_BUFFER_MAX_ENTRIES` (default `2000`; in memory API log buffer size for `/logs/*`)
-- `OPS_ENABLED` (`1` to expose `/logs/recent` and `/logs/metrics`; default disabled)
 - `METRICS_ENABLED` (`1` or `0`; default `1`; controls the Prometheus metrics endpoint)
 - `METRICS_EXPOSE_PATH` (default `/metrics`; HTTP path for Prometheus exposition)
 - `STREAM_SUPPRESS_TOOLISH` (`1` to suppress tool call like SSE payloads; default preserves raw output)
-- `READINESS_TIMEOUT_MS` (default `1500`; timeout in ms for `/readyz` Ollama probe, clamped to `100..10000`)
-- `READINESS_STRICT` (`1` or `0`, default `1`; when `1`, `/readyz` returns `503` if upstream is unavailable)
 - `MODEL_PREFLIGHT_ON_START` (`1` to fail startup when the configured Ollama model is missing; default `0`)
 - `MODEL_PREFLIGHT_TIMEOUT_MS` (default `2000`; timeout in ms for `/v1/models/check` and startup preflight, clamped to `200..10000`)
 - `BUILD_GIT_SHA` (optional; exposed by `GET /version`)
 - `BUILD_TIME` (optional ISO timestamp; exposed by `GET /version`)
 
+The following runtime settings moved to YAML and should no longer be set via env:
+- `server.port` replaces `PORT`
+- `readiness.timeoutMs` replaces `READINESS_TIMEOUT_MS`
+- `readiness.strict` replaces `READINESS_STRICT`
+- `ops.enabled` replaces `OPS_ENABLED`
+- `ops.logBufferMaxEntries` replaces `LOG_BUFFER_MAX_ENTRIES`
+- `debate.maxConcurrent` replaces `DEBATE_MAX_CONCURRENT`
+- `debate.modelAllowlist` replaces `DEBATE_MODEL_ALLOWLIST`
+
 Runtime config YAML keys and current defaults:
+- `server.port` (default `3000`)
+- `readiness.timeoutMs` (default `1500`; clamped to `100..10000`)
+- `readiness.strict` (default `true`; when true, `/readyz` returns `503` if upstream is unavailable)
+- `ops.enabled` (default `false`; enables `/logs/recent` and `/logs/metrics`)
+- `ops.logBufferMaxEntries` (default `2000`; in memory API log buffer size for `/logs/*`)
+- `debate.maxConcurrent` (default `1`; max active `/v1/debate` requests)
+- `debate.modelAllowlist` (default `llama3.1:8b,qwen2.5:14b,qwen2.5-coder:14b`)
 - `limits.logCollectionTimeoutMs` (default `15000`; timeout for log collection commands)
 - `limits.maxCommandBytes` (default `2000000`; maximum collected command output size in bytes)
 - `limits.maxQueryHours` (default `168`; maximum log query lookback window in hours)
@@ -314,7 +322,7 @@ Example response shape:
   },
   "notes": [
     "Winner is always decided by OpenClaw policy.",
-    "Models must be present in DEBATE_MODEL_ALLOWLIST."
+    "Models must be present in debate.modelAllowlist from the selected YAML config."
   ]
 }
 ```

@@ -1,11 +1,12 @@
 import type { Express, Request, Response } from 'express'
+import { getRuntimeConfig } from '../config/runtimeConfig.js'
 import { env } from '../config/env.js'
 import { getLogMetrics, getRecentLogs } from '../log.js'
 import { renderPrometheusMetrics } from '../http/metrics.js'
 import type { VersionInfo } from '../version.js'
 
 export function registerOpsRoutes(app: Express, versionInfo: VersionInfo): void {
-  const opsEnabled = env.OPS_ENABLED
+  const opsEnabled = getRuntimeConfig().ops.enabled
 
   app.get('/healthz', (_req: Request, res: Response) => {
     res.status(200).json({ ok: true })

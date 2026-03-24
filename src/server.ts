@@ -1,11 +1,12 @@
-import { env } from './config/env.js'
 import { ollamaBaseURL } from './ollama.js'
 import { log } from './log.js'
 import { createApp } from './app.js'
+import { getRuntimeConfig } from './config/runtimeConfig.js'
 import { runStartupModelPreflight } from './startupPreflight.js'
 
-const port = env.PORT
-const maxActiveDebates = env.DEBATE_MAX_CONCURRENT
+const runtimeConfig = getRuntimeConfig()
+const port = runtimeConfig.server.port
+const maxActiveDebates = runtimeConfig.debate.maxConcurrent
 
 const app = createApp(maxActiveDebates)
 

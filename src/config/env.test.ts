@@ -27,4 +27,15 @@ describe('env preflight timeout', () => {
 
     expect(env.MODEL_PREFLIGHT_TIMEOUT_MS).toBe(200)
   })
+
+  it('ignores deprecated runtime env vars moved to YAML config', async () => {
+    process.env.PORT = 'not-a-number'
+    process.env.DEBATE_MAX_CONCURRENT = 'NaN'
+    process.env.LOG_BUFFER_MAX_ENTRIES = 'oops'
+
+    const { env } = await import('./env.js')
+
+    expect(env.LOG_LEVEL).toBe('info')
+    expect(env.MODEL_PREFLIGHT_TIMEOUT_MS).toBe(2_000)
+  })
 })

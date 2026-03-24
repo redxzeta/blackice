@@ -1,6 +1,7 @@
 import { runWorkerText } from './ollama.js'
 import type { DebateRequest } from './schema.js'
 import { isCodexModel } from './ai/modelPolicy.js'
+import { getRuntimeConfig } from './config/runtimeConfig.js'
 
 type DebateSpeaker = 'A' | 'B'
 
@@ -34,7 +35,6 @@ type DebateExecutionMetadata = {
   safetyIdentifier?: string
 }
 
-const DEFAULT_MODEL_ALLOWLIST = ['llama3.1:8b', 'qwen2.5:14b', 'qwen2.5-coder:14b']
 const TURN_RETRY_COUNT = 1
 const PER_TURN_TIMEOUT_MS = 45_000
 const MAX_TOTAL_TRANSCRIPT_CHARS = 80_000
@@ -47,15 +47,7 @@ export class DebateInputError extends Error {
 }
 
 function getModelAllowlist(): string[] {
-  const raw = process.env.DEBATE_MODEL_ALLOWLIST?.trim()
-  if (!raw) {
-    return DEFAULT_MODEL_ALLOWLIST
-  }
-
-  return raw
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean)
+  return getRuntimeConfig().debate.modelAllowlist
 }
 
 function assertModelAllowed(model: string, allowlist: string[]): void {
