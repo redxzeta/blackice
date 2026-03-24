@@ -64,11 +64,13 @@ pnpm run dev
 - `POST /v1/policy/dry-run`
 - `GET /logs/recent` *(requires `ops.enabled: true` in the selected YAML config)*
 - `GET /logs/metrics` *(requires `ops.enabled: true` in the selected YAML config)*
+- `GET /metrics` *(requires `METRICS_ENABLED=1`, default enabled; path configurable via `METRICS_EXPOSE_PATH`)*
 - `GET /version`
 - `GET /healthz`
 - `GET /readyz`
 - `GET /v1/models/check`
 - `GET /health/loki`
+
 
 ## Envelope Contract
 Latest `user` message is interpreted as:
@@ -100,21 +102,25 @@ Security controls:
 - child process timeouts
 - path allowlist enforcement for logs
 
-## Runtime Configuration
-Runtime now splits configuration into two sources.
+## Environment Variables
+Runtime and log collection settings are loaded from `BLACKICE_CONFIG_FILE` YAML. The old per setting environment variables for log explainer and Ollama tuning are no longer the active interface.
 
-Environment variables:
-- `BLACKICE_CONFIG_FILE` (default: `./config/blackice.local.yaml`; selects the YAML runtime profile)
-- `ACTIONS_ENABLED` (`true`/`false`, default `true`)
-- `LOG_LEVEL` (`info`/`debug`, default `info`)
-- `ALLOWLIST_LOG_PATHS` (comma-separated absolute files or directories)
-- `STREAM_SUPPRESS_TOOLISH` (`1` to suppress tool-call-like SSE payloads; default preserves raw output)
+Top level environment variables:
+- `BLACKICE_CONFIG_FILE` (default: `./config/blackice.local.yaml`; use `./config/blackice.e2e.yaml` or `./config/blackice.prod.yaml`)
+- `API_TOKEN` (optional; when set, all non exempt API routes require `Authorization: Bearer <token>`)
+- `AUTH_EXEMPT_PATHS` (optional CSV; defaults to `/healthz,/readyz,/version`)
+- `ACTIONS_ENABLED` (`true` or `false`, default `true`)
+- `LOG_LEVEL` (`info` or `debug`, default `info`)
+- `ALLOWLIST_LOG_PATHS` (comma separated absolute files or directories; defaults to `/var/log/syslog,/var/log/auth.log` for `tail_log`)
+- `METRICS_ENABLED` (`1` or `0`; default `1`; controls the Prometheus metrics endpoint)
+- `METRICS_EXPOSE_PATH` (default `/metrics`; HTTP path for Prometheus exposition)
+- `STREAM_SUPPRESS_TOOLISH` (`1` to suppress tool call like SSE payloads; default preserves raw output)
 - `MODEL_PREFLIGHT_ON_START` (`1` to fail startup when the configured Ollama model is missing; default `0`)
 - `MODEL_PREFLIGHT_TIMEOUT_MS` (default `2000`; timeout in ms for `/v1/models/check` and startup preflight, clamped to `200..10000`)
 - `BUILD_GIT_SHA` (optional; exposed by `GET /version`)
 - `BUILD_TIME` (optional ISO timestamp; exposed by `GET /version`)
 
-YAML driven runtime settings in the selected config file:
+The following runtime settings moved to YAML and should no longer be set via env:
 - `server.port` replaces `PORT`
 - `readiness.timeoutMs` replaces `READINESS_TIMEOUT_MS`
 - `readiness.strict` replaces `READINESS_STRICT`
@@ -122,7 +128,34 @@ YAML driven runtime settings in the selected config file:
 - `ops.logBufferMaxEntries` replaces `LOG_BUFFER_MAX_ENTRIES`
 - `debate.maxConcurrent` replaces `DEBATE_MAX_CONCURRENT`
 - `debate.modelAllowlist` replaces `DEBATE_MODEL_ALLOWLIST`
-- `ollama.*`, `loki.*`, and `limits.*` remain YAML driven runtime settings
+
+Runtime config YAML keys and current defaults:
+- `server.port` (default `3000`)
+- `readiness.timeoutMs` (default `1500`; clamped to `100..10000`)
+- `readiness.strict` (default `true`; when true, `/readyz` returns `503` if upstream is unavailable)
+- `ops.enabled` (default `false`; enables `/logs/recent` and `/logs/metrics`)
+- `ops.logBufferMaxEntries` (default `2000`; in memory API log buffer size for `/logs/*`)
+- `debate.maxConcurrent` (default `1`; max active `/v1/debate` requests)
+- `debate.modelAllowlist` (default `llama3.1:8b,qwen2.5:14b,qwen2.5-coder:14b`)
+- `limits.logCollectionTimeoutMs` (default `15000`; timeout for log collection commands)
+- `limits.maxCommandBytes` (default `2000000`; maximum collected command output size in bytes)
+- `limits.maxQueryHours` (default `168`; maximum log query lookback window in hours)
+- `limits.maxLinesCap` (default `2000`; maximum returned log lines)
+- `limits.maxConcurrency` (default `5`; max allowed batch concurrency)
+- `limits.maxLogChars` (default `40000`; max log text sent into analysis prompts)
+- `ollama.baseUrl` (default `http://192.168.1.230:11434`)
+- `ollama.model` (default `qwen2.5:14b`)
+- `ollama.timeoutMs` (default `45000`)
+- `ollama.retryAttempts` (default `2`)
+- `ollama.retryBackoffMs` (default `1000`)
+- `loki.baseUrl` (empty by default; enables Loki routes when set)
+- `loki.rulesFile` (empty by default; required when `loki.baseUrl` is set)
+- `loki.timeoutMs` (defaults to `limits.logCollectionTimeoutMs`, so `15000` unless overridden)
+- `loki.maxWindowMinutes` (default `60`; max `start` and `end` window for Loki query mode)
+- `loki.defaultWindowMinutes` (default `15`; default window when `start` and `end` are omitted)
+- `loki.maxLinesCap` (defaults to `limits.maxLinesCap`, so `2000` unless overridden)
+- `loki.maxResponseBytes` (defaults to `limits.maxCommandBytes`, so `2000000` unless overridden)
+- `loki.requireScopeLabels` (default `true`; requires `host` or `unit` in query mode unless `allowUnscoped=true`)
 
 Loki rules YAML format:
 ```yaml
@@ -166,6 +199,19 @@ pnpm run test:watch
 ```
 
 ## Quick Tests
+Optional bearer token auth:
+```bash
+API_TOKEN=supersecret AUTH_EXEMPT_PATHS=/healthz,/readyz,/version pnpm start
+
+curl -sS http://127.0.0.1:3000/v1/chat/completions \
+  -H 'Authorization: Bearer supersecret' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "router/default",
+    "messages": [{"role":"user","content":"hi"}]
+  }'
+```
+
 Streaming CHAT:
 ```bash
 curl -N -sS http://127.0.0.1:3000/v1/chat/completions \
@@ -314,6 +360,42 @@ API metrics (last 1 hour):
 ```bash
 curl -sS "http://127.0.0.1:3000/logs/metrics?window=1h"
 ```
+### Metrics Window Parameter
+
+The `/logs/metrics` endpoint accepts a `window` parameter that defines the time range for metrics aggregation.
+
+Format:
+
+<number><unit>
+
+Supported units:
+- s = seconds
+- m = minutes
+- h = hours
+- d = days
+
+Examples:
+
+/logs/metrics?window=30m
+/logs/metrics?window=1h
+/logs/metrics?window=1d
+
+If an invalid value is provided, the system falls back to the default window of **1 hour**.
+
+Prometheus scrape endpoint:
+```bash
+curl -sS "http://127.0.0.1:3000/metrics"
+```
+
+Exported HTTP metrics:
+- `blackice_http_requests_total{route,method,status}`
+- `blackice_http_request_duration_ms_bucket{route,method,le}`
+- `blackice_http_request_duration_ms_sum{route,method}`
+- `blackice_http_request_duration_ms_count{route,method}`
+- `blackice_inflight_requests{route}`
+
+Histogram buckets in milliseconds:
+- `5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, +Inf`
 
 Readiness check:
 

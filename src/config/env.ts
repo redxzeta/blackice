@@ -44,6 +44,8 @@ const envSchema = z.object({
   MODEL_PREFLIGHT_TIMEOUT_MS: boundedIntSchema(200, 10_000, 2000),
 
   LOG_LEVEL: z.enum(['debug', 'info']).default('info'),
+  METRICS_ENABLED: booleanFlagSchema.default(true),
+  METRICS_EXPOSE_PATH: z.string().trim().min(1).default('/metrics'),
 })
 
 export type Env = z.infer<typeof envSchema>
