@@ -39,6 +39,20 @@ type LokiRulesConfig = {
   units: Set<string>
   hostsRegex: RegExp | null
   unitsRegex: RegExp | null
+  hostsRegexRaw?: string
+  unitsRegexRaw?: string
+}
+
+export type LokiDiscovery = {
+  job?: string
+  allowedLabels: string[]
+  hosts: string[]
+  units: string[]
+  hostsRegex?: string
+  unitsRegex?: string
+  hasHostsRegex: boolean
+  hasUnitsRegex: boolean
+  requireScopeLabels: boolean
 }
 
 let cachedLokiRules: LokiRulesConfig | null = null
@@ -224,6 +238,8 @@ function loadLokiRulesConfig(): LokiRulesConfig {
     allowedLabels,
     hosts,
     units,
+    hostsRegexRaw: hostsRegexRaw || undefined,
+    unitsRegexRaw: unitsRegexRaw || undefined,
     hostsRegex: parseOptionalRegex(hostsRegexRaw, 'hostsRegex'),
     unitsRegex: parseOptionalRegex(unitsRegexRaw, 'unitsRegex'),
   }
@@ -325,8 +341,34 @@ export function ensureLokiRulesConfigured(): void {
 
 export function getLokiSyntheticTargets(): string[] {
   // Loki selector strings are intentionally not accepted by /analyze/logs/batch.
-  // Keep targets empty until structured discovery metadata is added.
+  // Clients should use the discovery payload instead of synthetic selector examples.
   return []
+}
+
+export function getLokiDiscovery(): LokiDiscovery {
+  if (!isLokiEnabled()) {
+    return {
+      allowedLabels: [],
+      hosts: [],
+      units: [],
+      hasHostsRegex: false,
+      hasUnitsRegex: false,
+      requireScopeLabels: LOKI_REQUIRE_SCOPE_LABELS,
+    }
+  }
+
+  const rules = loadLokiRulesConfig()
+  return {
+    job: rules.job,
+    allowedLabels: [...rules.allowedLabels].sort(),
+    hosts: [...rules.hosts].sort(),
+    units: [...rules.units].sort(),
+    hostsRegex: rules.hostsRegexRaw,
+    unitsRegex: rules.unitsRegexRaw,
+    hasHostsRegex: rules.hostsRegex !== null,
+    hasUnitsRegex: rules.unitsRegex !== null,
+    requireScopeLabels: LOKI_REQUIRE_SCOPE_LABELS,
+  }
 }
 
 export function validateAllowedLokiSelector(selector: string): string {

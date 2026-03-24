@@ -1,3 +1,5 @@
+import { rm, writeFile } from 'node:fs/promises'
+import path from 'node:path'
 import request from 'supertest'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -224,6 +226,188 @@ describe('integration routes', () => {
     expect(res.body.error).toBeDefined()
   })
 
+  it('GET /analyze/logs/targets returns structured Loki discovery metadata', async () => {
+    const repoRoot = process.cwd()
+    const configPath = path.join(repoRoot, '.tmp-targets-test-config.yaml')
+    const rulesPath = path.join(repoRoot, 'config', 'loki-rules.local.yaml')
+    try {
+      await writeFile(
+        configPath,
+        [
+          'version: 1',
+          'ollama:',
+          '  baseUrl: "http://127.0.0.1:11434"',
+          '  model: "qwen2.5:14b"',
+          '  timeoutMs: 45000',
+          '  retryAttempts: 2',
+          '  retryBackoffMs: 1000',
+          'loki:',
+          '  baseUrl: "http://127.0.0.1:3100"',
+          '  timeoutMs: 10000',
+          '  maxWindowMinutes: 60',
+          '  defaultWindowMinutes: 15',
+          '  maxLinesCap: 2000',
+          '  maxResponseBytes: 2000000',
+          '  requireScopeLabels: true',
+          `  rulesFile: "${rulesPath}"`,
+          'limits:',
+          '  logCollectionTimeoutMs: 15000',
+          '  maxCommandBytes: 2000000',
+          '  maxQueryHours: 168',
+          '  maxLinesCap: 2000',
+          '  maxConcurrency: 5',
+          '  maxLogChars: 40000',
+        ].join('\n')
+      )
+      vi.stubEnv('BLACKICE_CONFIG_FILE', configPath)
+
+      const { createApp } = await import('./app.js')
+      const app = createApp(1)
+
+      const res = await request(app).get('/analyze/logs/targets')
+
+      expect(res.status).toBe(200)
+      expect(res.body.targets).toEqual([])
+      expect(res.body.discovery).toEqual({
+        job: 'journald',
+        allowedLabels: ['app', 'host', 'job', 'service_name', 'unit'],
+        hosts: ['owonto', 'uwuntu'],
+        units: ['blackice-router.service', 'openclaw.service', 'promtail.service'],
+        hasHostsRegex: false,
+        hasUnitsRegex: false,
+        requireScopeLabels: true,
+      })
+    } finally {
+      await rm(configPath, { force: true })
+    }
+  })
+
+  it('GET /analyze/logs/targets includes Loki regex allowlists when configured', async () => {
+    const repoRoot = process.cwd()
+    const configPath = path.join(repoRoot, '.tmp-targets-regex-config.yaml')
+    const rulesPath = path.join(repoRoot, '.tmp-targets-regex-rules.yaml')
+    try {
+      await writeFile(
+        rulesPath,
+        [
+          'job: journald',
+          'allowedLabels:',
+          '  - job',
+          '  - host',
+          '  - unit',
+          'hostsRegex: "^prod-(api|worker)-\\\\d+$"',
+          'unitsRegex: "^[a-z0-9-]+\\\\.service$"',
+        ].join('\n')
+      )
+
+      await writeFile(
+        configPath,
+        [
+          'version: 1',
+          'ollama:',
+          '  baseUrl: "http://127.0.0.1:11434"',
+          '  model: "qwen2.5:14b"',
+          '  timeoutMs: 45000',
+          '  retryAttempts: 2',
+          '  retryBackoffMs: 1000',
+          'loki:',
+          '  baseUrl: "http://127.0.0.1:3100"',
+          '  timeoutMs: 10000',
+          '  maxWindowMinutes: 60',
+          '  defaultWindowMinutes: 15',
+          '  maxLinesCap: 2000',
+          '  maxResponseBytes: 2000000',
+          '  requireScopeLabels: true',
+          `  rulesFile: "${rulesPath}"`,
+          'limits:',
+          '  logCollectionTimeoutMs: 15000',
+          '  maxCommandBytes: 2000000',
+          '  maxQueryHours: 168',
+          '  maxLinesCap: 2000',
+          '  maxConcurrency: 5',
+          '  maxLogChars: 40000',
+        ].join('\n')
+      )
+
+      vi.stubEnv('BLACKICE_CONFIG_FILE', configPath)
+
+      const { createApp } = await import('./app.js')
+      const app = createApp(1)
+
+      const res = await request(app).get('/analyze/logs/targets')
+
+      expect(res.status).toBe(200)
+      expect(res.body.discovery).toEqual({
+        job: 'journald',
+        allowedLabels: ['host', 'job', 'unit'],
+        hosts: [],
+        units: [],
+        hostsRegex: '^prod-(api|worker)-\\d+$',
+        unitsRegex: '^[a-z0-9-]+\\.service$',
+        hasHostsRegex: true,
+        hasUnitsRegex: true,
+        requireScopeLabels: true,
+      })
+    } finally {
+      await Promise.all([rm(configPath, { force: true }), rm(rulesPath, { force: true })])
+    }
+  })
+
+  it('GET /analyze/logs/targets stays available when Loki is disabled', async () => {
+    const repoRoot = process.cwd()
+    const configPath = path.join(repoRoot, '.tmp-targets-disabled-config.yaml')
+    try {
+      await writeFile(
+        configPath,
+        [
+          'version: 1',
+          'ollama:',
+          '  baseUrl: "http://127.0.0.1:11434"',
+          '  model: "qwen2.5:14b"',
+          '  timeoutMs: 45000',
+          '  retryAttempts: 2',
+          '  retryBackoffMs: 1000',
+          'loki:',
+          '  baseUrl: ""',
+          '  timeoutMs: 10000',
+          '  maxWindowMinutes: 60',
+          '  defaultWindowMinutes: 15',
+          '  maxLinesCap: 2000',
+          '  maxResponseBytes: 2000000',
+          '  requireScopeLabels: true',
+          '  rulesFile: ""',
+          'limits:',
+          '  logCollectionTimeoutMs: 15000',
+          '  maxCommandBytes: 2000000',
+          '  maxQueryHours: 168',
+          '  maxLinesCap: 2000',
+          '  maxConcurrency: 5',
+          '  maxLogChars: 40000',
+        ].join('\n')
+      )
+      vi.stubEnv('BLACKICE_CONFIG_FILE', configPath)
+
+      const { createApp } = await import('./app.js')
+      const app = createApp(1)
+
+      const res = await request(app).get('/analyze/logs/targets')
+
+      expect(res.status).toBe(200)
+      expect(res.body).toEqual({
+        targets: [],
+        discovery: {
+          allowedLabels: [],
+          hosts: [],
+          units: [],
+          hasHostsRegex: false,
+          hasUnitsRegex: false,
+          requireScopeLabels: true,
+        },
+      })
+    } finally {
+      await rm(configPath, { force: true })
+    }
+  })
   it('POST /analyze/logs redacts secrets before prompting and before responding', async () => {
     vi.doMock('./logExplainer/logCollector.js', () => ({
       checkLokiHealth: vi.fn(),
