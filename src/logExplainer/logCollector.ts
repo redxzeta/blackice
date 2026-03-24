@@ -39,6 +39,8 @@ type LokiRulesConfig = {
   units: Set<string>
   hostsRegex: RegExp | null
   unitsRegex: RegExp | null
+  hostsRegexRaw?: string
+  unitsRegexRaw?: string
 }
 
 export type LokiDiscovery = {
@@ -46,6 +48,8 @@ export type LokiDiscovery = {
   allowedLabels: string[]
   hosts: string[]
   units: string[]
+  hostsRegex?: string
+  unitsRegex?: string
   hasHostsRegex: boolean
   hasUnitsRegex: boolean
   requireScopeLabels: boolean
@@ -286,6 +290,8 @@ function loadLokiRulesConfig(): LokiRulesConfig {
     allowedLabels,
     hosts,
     units,
+    hostsRegexRaw: hostsRegexRaw || undefined,
+    unitsRegexRaw: unitsRegexRaw || undefined,
     hostsRegex: parseOptionalRegex(hostsRegexRaw, 'hostsRegex'),
     unitsRegex: parseOptionalRegex(unitsRegexRaw, 'unitsRegex'),
   }
@@ -409,6 +415,8 @@ export function getLokiDiscovery(): LokiDiscovery {
     allowedLabels: [...rules.allowedLabels].sort(),
     hosts: [...rules.hosts].sort(),
     units: [...rules.units].sort(),
+    hostsRegex: rules.hostsRegexRaw,
+    unitsRegex: rules.unitsRegexRaw,
     hasHostsRegex: rules.hostsRegex !== null,
     hasUnitsRegex: rules.unitsRegex !== null,
     requireScopeLabels: LOKI_REQUIRE_SCOPE_LABELS,
