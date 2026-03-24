@@ -343,6 +343,95 @@ describe('integration routes', () => {
     expect(limitedRes.headers['x-ratelimit-limit']).toBe('2')
   })
 
+  it('POST /analyze/logs/batch raw mode marks empty journald results as no_logs', async () => {
+    const collectLogsMock = vi.fn(async () => '')
+    const analyzeLogsWithOllamaMock = vi.fn(async () => 'should-not-run')
+
+    vi.doMock('./logExplainer/logCollector.js', () => ({
+      checkLokiHealth: vi.fn(),
+      collectLogs: collectLogsMock,
+      collectLokiBatchLogs: vi.fn(),
+      ensureLokiRulesConfigured: vi.fn(),
+      getLokiSyntheticTargets: vi.fn(() => []),
+    }))
+    vi.doMock('./logExplainer/ollamaClient.js', () => ({
+      analyzeLogsWithOllama: analyzeLogsWithOllamaMock,
+    }))
+
+    const { createApp } = await import('./app.js')
+    const app = createApp(1)
+    const payload = {
+      source: 'journald',
+      targets: ['ssh.service'],
+      mode: 'raw',
+      hours: 1,
+      maxLines: 20,
+      concurrency: 1,
+    }
+
+    const res = await request(app).post('/analyze/logs/batch').send(payload)
+
+    expect(res.status).toBe(200)
+    expect(res.body.results).toHaveLength(1)
+    expect(res.body.results[0]).toMatchObject({
+      target: 'ssh.service',
+      ok: true,
+      no_logs: true,
+      message: 'No logs collected (raw mode)',
+      evidence: [],
+    })
+    expect(res.body.results[0].logs).toBeUndefined()
+    expect(collectLogsMock).toHaveBeenCalledTimes(1)
+    expect(analyzeLogsWithOllamaMock).not.toHaveBeenCalled()
+  })
+
+  it('POST /analyze/logs/batch raw mode marks empty loki results as no_logs', async () => {
+    const collectLokiBatchLogsMock = vi.fn(async () => ({
+      query: '{job="journald",unit="ssh.service"}',
+      logs: '',
+      limit: 2000,
+      hours: 1,
+    }))
+    const analyzeLogsWithOllamaMock = vi.fn(async () => 'should-not-run')
+
+    vi.doMock('./logExplainer/logCollector.js', () => ({
+      checkLokiHealth: vi.fn(),
+      collectLogs: vi.fn(),
+      collectLokiBatchLogs: collectLokiBatchLogsMock,
+      ensureLokiRulesConfigured: vi.fn(),
+      getLokiSyntheticTargets: vi.fn(() => []),
+    }))
+    vi.doMock('./logExplainer/ollamaClient.js', () => ({
+      analyzeLogsWithOllama: analyzeLogsWithOllamaMock,
+    }))
+
+    const { createApp } = await import('./app.js')
+    const app = createApp(1)
+    const payload = {
+      source: 'loki',
+      filters: {
+        job: 'journald',
+        unit: 'ssh.service',
+      },
+      mode: 'raw',
+    }
+
+    const res = await request(app).post('/analyze/logs/batch').send(payload)
+
+    expect(res.status).toBe(200)
+    expect(res.body.results).toHaveLength(1)
+    expect(res.body.results[0]).toMatchObject({
+      target: '{job="journald",unit="ssh.service"}',
+      ok: true,
+      no_logs: true,
+      message: 'No logs collected (raw mode)',
+      evidence: [],
+    })
+    expect(res.body.results[0].logs).toBeUndefined()
+    expect(collectLokiBatchLogsMock).toHaveBeenCalledTimes(1)
+    expect(analyzeLogsWithOllamaMock).not.toHaveBeenCalled()
+  })
+
   it('GET /v1/models/check returns availability for the configured model', async () => {
     vi.stubGlobal(
       'fetch',
