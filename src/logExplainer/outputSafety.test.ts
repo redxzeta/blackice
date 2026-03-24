@@ -10,7 +10,7 @@ describe('log explainer output safety', () => {
   it('redacts common secret formats', () => {
     const input = [
       'authorization: Bearer abc123',
-      'Authorization: Basic Zm9vOmJhcg==',
+      'Authorization:Basic Zm9vOmJhcg==',
       'bearer lower-case-token',
       'BEARER upper-case-token',
       'x-api-key: secret-key',
@@ -42,10 +42,18 @@ describe('log explainer output safety', () => {
     expect(sanitizeReadOnlyEvidenceLine('authorization: Bearer abc123')).toBe(
       'authorization: Bearer [REDACTED]'
     )
-    expect(sanitizeReadOnlyEvidenceLine('Authorization: Basic Zm9vOmJhcg==')).toBe(
-      'Authorization: [REDACTED]'
+    expect(sanitizeReadOnlyEvidenceLine('Authorization:Basic Zm9vOmJhcg==')).toBe(
+      'Authorization:Basic [REDACTED]'
     )
     expect(sanitizeReadOnlyEvidenceLine('BEARER upper-case-token')).toBe('BEARER [REDACTED]')
+  })
+
+  it('keeps authorization prose when it is not a credential value', () => {
+    const prose = 'Authorization: Basic auth is required by the upstream'
+    const result = redactSecrets(prose)
+
+    expect(result.redacted).toBe(false)
+    expect(result.text).toBe(prose)
   })
 
   it('removes unsafe commands from analysis output', () => {

@@ -22,12 +22,11 @@ const FORBIDDEN_PATTERNS: RegExp[] = [
   /\bufw\s+(?:enable|disable|reset|allow|deny|reject|limit|delete|reload)\b/i,
 ]
 
+const AUTHORIZATION_HEADER_PATTERN = /(\bauthorization\b\s*[=:]\s*)([^\r\n]+)/gi
+const AUTH_SCHEME_WITH_TOKEN_PATTERN = /^([A-Za-z][A-Za-z0-9._-]*)\s+([A-Za-z0-9._~+/=-]+)$/
+const AUTH_TOKEN_PATTERN = /^[A-Za-z0-9._~+/=-]+$/
+
 const SECRET_REDACTION_RULES: Array<{ name: string; pattern: RegExp; replacement: string }> = [
-  {
-    name: 'authorization_header',
-    pattern: /(\bauthorization\b\s*[=:]\s+)(?!Bearer\b|\[REDACTED\])[^\r\n]+/gi,
-    replacement: '$1[REDACTED]',
-  },
   {
     name: 'bearer_token',
     pattern: /\b(Bearer)\s+[A-Za-z0-9._~+/=-]+/gi,
@@ -44,6 +43,34 @@ const SECRET_REDACTION_RULES: Array<{ name: string; pattern: RegExp; replacement
     replacement: '$1[REDACTED]',
   },
 ]
+
+function redactAuthorizationHeaderValues(text: string): { text: string; redacted: boolean } {
+  let redacted = false
+  const sanitized = text.replace(
+    AUTHORIZATION_HEADER_PATTERN,
+    (match: string, prefix: string, value: string): string => {
+      const trimmedValue = value.trim()
+      if (!trimmedValue || /^\[REDACTED\]$/i.test(trimmedValue)) {
+        return match
+      }
+
+      const schemeMatch = trimmedValue.match(AUTH_SCHEME_WITH_TOKEN_PATTERN)
+      if (schemeMatch) {
+        redacted = true
+        return `${prefix}${schemeMatch[1]} [REDACTED]`
+      }
+
+      if (AUTH_TOKEN_PATTERN.test(trimmedValue)) {
+        redacted = true
+        return `${prefix}[REDACTED]`
+      }
+
+      return match
+    }
+  )
+
+  return { text: sanitized, redacted }
+}
 
 export function ensureReadOnlyAnalysisOutput(
   analysis: string
@@ -73,8 +100,12 @@ export function redactSecrets(text: string): {
   redacted: boolean
   reasons: string[]
 } {
-  let sanitized = text
+  const authRedaction = redactAuthorizationHeaderValues(text)
+  let sanitized = authRedaction.text
   const reasons = new Set<string>()
+  if (authRedaction.redacted) {
+    reasons.add('authorization_header')
+  }
 
   for (const rule of SECRET_REDACTION_RULES) {
     const next = sanitized.replace(rule.pattern, rule.replacement)

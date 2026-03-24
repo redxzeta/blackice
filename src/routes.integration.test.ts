@@ -255,7 +255,7 @@ describe('integration routes', () => {
     expect(res.body.analysis).not.toContain('response-secret')
     expect(res.body.safety).toEqual({
       redacted: true,
-      reasons: expect.arrayContaining(['bearer_token']),
+      reasons: expect.arrayContaining(['authorization_header']),
     })
   })
 
