@@ -344,7 +344,7 @@ Log Explainer status route:
 curl -sS http://127.0.0.1:3000/analyze/logs/status
 ```
 
-Example response shape:
+Example response shape (with default `BLACKICE_CONFIG_FILE=./config/blackice.local.yaml`):
 ```json
 {
   "endpoints": [
@@ -358,17 +358,17 @@ Example response shape:
   "limits": {
     "maxHours": 168,
     "maxLinesRequest": 5000,
-    "maxLinesEffectiveCap": 5000,
+    "maxLinesEffectiveCap": 2000,
     "batchConcurrencyMin": 1,
     "batchConcurrencyMax": 5,
     "loki": {
-      "enabled": false,
-      "timeoutMs": 15000,
+      "enabled": true,
+      "timeoutMs": 10000,
       "maxWindowMinutes": 60,
       "defaultWindowMinutes": 15,
-      "maxLinesCap": 5000,
-      "maxResponseBytes": 1048576,
-      "requireScopeLabels": false
+      "maxLinesCap": 2000,
+      "maxResponseBytes": 2000000,
+      "requireScopeLabels": true
     }
   },
   "targets": {
@@ -376,8 +376,8 @@ Example response shape:
     "items": []
   },
   "llm": {
-    "baseUrl": "http://127.0.0.1:11434",
-    "model": "llama3.1",
+    "baseUrl": "http://192.168.1.230:11434",
+    "model": "qwen2.5:14b",
     "timeoutMs": 45000,
     "retryAttempts": 2,
     "retryBackoffMs": 1000
@@ -434,17 +434,17 @@ Example response shape:
     "limits": {
       "maxHours": 168,
       "maxLinesRequest": 5000,
-      "maxLinesEffectiveCap": 5000,
+      "maxLinesEffectiveCap": 2000,
       "batchConcurrencyMin": 1,
       "batchConcurrencyMax": 5,
       "loki": {
-        "enabled": false,
-        "timeoutMs": 15000,
+        "enabled": true,
+        "timeoutMs": 10000,
         "maxWindowMinutes": 60,
         "defaultWindowMinutes": 15,
-        "maxLinesCap": 5000,
-        "maxResponseBytes": 1048576,
-        "requireScopeLabels": false
+        "maxLinesCap": 2000,
+        "maxResponseBytes": 2000000,
+        "requireScopeLabels": true
       }
     },
     "targets": {
@@ -452,8 +452,8 @@ Example response shape:
       "items": []
     },
     "llm": {
-      "baseUrl": "http://127.0.0.1:11434",
-      "model": "llama3.1",
+      "baseUrl": "http://192.168.1.230:11434",
+      "model": "qwen2.5:14b",
       "timeoutMs": 45000,
       "retryAttempts": 2,
       "retryBackoffMs": 1000
