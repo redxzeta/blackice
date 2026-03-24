@@ -39,15 +39,16 @@ function boundedIntSchema(min: number, max: number, fallback: number) {
   }, z.number().int().min(min).max(max).default(fallback))
 }
 
-const logLevelSchema = z.preprocess((value) => {
-  if (value === undefined || value === null || String(value).trim() === '') {
-    return undefined
-  }
+const logLevelSchema = z.preprocess(
+  (value) => {
+    if (value === undefined || value === null || String(value).trim() === '') {
+      return undefined
+    }
 
-  return String(value)
-    .trim()
-    .toLowerCase()
-}, z.enum(['debug', 'info']).default('info'))
+    return String(value).trim().toLowerCase()
+  },
+  z.enum(['debug', 'info']).default('info')
+)
 
 const envSchema = z.object({
   PORT: z.coerce.number().int().default(3000),
