@@ -39,11 +39,22 @@ function boundedIntSchema(min: number, max: number, fallback: number) {
   }, z.number().int().min(min).max(max).default(fallback))
 }
 
+const logLevelSchema = z.preprocess(
+  (value) => {
+    if (value === undefined || value === null || String(value).trim() === '') {
+      return undefined
+    }
+
+    return String(value).trim().toLowerCase()
+  },
+  z.enum(['debug', 'info']).default('info')
+)
+
 const envSchema = z.object({
   MODEL_PREFLIGHT_ON_START: booleanFlagSchema.default(false),
   MODEL_PREFLIGHT_TIMEOUT_MS: boundedIntSchema(200, 10_000, 2000),
 
-  LOG_LEVEL: z.enum(['debug', 'info']).default('info'),
+  LOG_LEVEL: logLevelSchema,
   METRICS_ENABLED: booleanFlagSchema.default(true),
   METRICS_EXPOSE_PATH: z.string().trim().min(1).default('/metrics'),
 })
