@@ -1,9 +1,9 @@
-import { spawn } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { parse as parseYaml } from 'yaml'
 import type { AnalyzeLogsBatchLokiRequest, AnalyzeLogsRequest } from './schema.js'
 import { getRuntimeConfig } from '../config/runtimeConfig.js'
+import { runBoundedCommand } from '../safety.js'
 
 const runtimeConfig = getRuntimeConfig()
 const LOG_COLLECTION_TIMEOUT_MS = Number(runtimeConfig.limits.logCollectionTimeoutMs)
@@ -71,70 +71,18 @@ function clampMaxLines(maxLines: number): number {
 }
 
 function runAllowedCommand(command: 'journalctl' | 'docker', args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let settled = false
-    const child = spawn(command, args, {
-      shell: false,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-
-    let stdout = ''
-    let stderr = ''
-
-    const timeout = setTimeout(() => {
-      if (settled) {
-        return
+  return runBoundedCommand(command, args, {
+    timeoutMs: LOG_COLLECTION_TIMEOUT_MS,
+    maxBytes: MAX_COMMAND_BYTES,
+    onError: (message, status) => {
+      if (status === 504) {
+        return buildError(504, `log collection timed out for ${command}`)
       }
-      settled = true
-      child.kill('SIGKILL')
-      reject(buildError(504, `log collection timed out for ${command}`))
-    }, LOG_COLLECTION_TIMEOUT_MS)
-
-    child.stdout.on('data', (buf: Buffer) => {
-      if (settled) {
-        return
+      if (status === 413) {
+        return buildError(413, 'command output exceeds MAX_COMMAND_BYTES limit')
       }
-
-      stdout += buf.toString('utf8')
-      if (Buffer.byteLength(stdout, 'utf8') > MAX_COMMAND_BYTES) {
-        settled = true
-        child.kill('SIGKILL')
-        reject(buildError(413, 'command output exceeds MAX_COMMAND_BYTES limit'))
-      }
-    })
-
-    child.stderr.on('data', (buf: Buffer) => {
-      if (settled) {
-        return
-      }
-      stderr += buf.toString('utf8')
-    })
-
-    child.on('error', (error: Error) => {
-      if (settled) {
-        return
-      }
-      settled = true
-      clearTimeout(timeout)
-      reject(buildError(500, `failed to execute ${command}: ${error.message}`))
-    })
-
-    child.on('close', (code: number | null) => {
-      if (settled) {
-        return
-      }
-      settled = true
-      clearTimeout(timeout)
-
-      if (code !== 0) {
-        reject(
-          buildError(502, `${command} failed: ${stderr.trim() || `exit code ${String(code)}`}`)
-        )
-        return
-      }
-
-      resolve(stdout)
-    })
+      return buildError(status ?? 500, message)
+    },
   })
 }
 
