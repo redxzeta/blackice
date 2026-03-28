@@ -25,7 +25,7 @@ flowchart LR
 
 ## Requirements
 - Node.js 18+
-- Environment config YAML present (`BLACKICE_CONFIG_FILE`, default `./config/blackice.local.yaml`)
+- Environment config YAML present and selected with `BLACKICE_CONFIG_FILE` (default `./config/blackice.local.yaml`)
 
 ## Install
 ```bash
@@ -100,32 +100,48 @@ Security controls:
 - child process timeouts
 - path allowlist enforcement for logs
 
-## Environment Variables
-- `OLLAMA_BASE_URL` (default: `http://localhost:11434`)
-- `OLLAMA_MODEL` (default: `qwen2.5:14b`)
-- `PORT` (default: `3000`)
-- `BLACKICE_CONFIG_FILE` (default: `./config/blackice.local.yaml`; use `./config/blackice.e2e.yaml` or `./config/blackice.prod.yaml`)
+## Runtime Configuration
+BlackIce loads its main runtime settings from the YAML file selected by `BLACKICE_CONFIG_FILE`. That YAML owns the Ollama, Loki, and log-collection limit settings.
+
+YAML-driven settings:
+- `ollama.baseUrl`
+- `ollama.model`
+- `ollama.timeoutMs`
+- `ollama.retryAttempts`
+- `ollama.retryBackoffMs`
+- `loki.baseUrl`
+- `loki.timeoutMs`
+- `loki.maxWindowMinutes`
+- `loki.defaultWindowMinutes`
+- `loki.maxLinesCap`
+- `loki.maxResponseBytes`
+- `loki.requireScopeLabels`
+- `loki.rulesFile`
+- `limits.logCollectionTimeoutMs`
+- `limits.maxCommandBytes`
+- `limits.maxQueryHours`
+- `limits.maxLinesCap`
+- `limits.maxConcurrency`
+- `limits.maxLogChars`
+
+Direct environment variables read by the app:
+- `BLACKICE_CONFIG_FILE` (default `./config/blackice.local.yaml`; use `./config/blackice.e2e.yaml` or `./config/blackice.prod.yaml`)
+- `PORT` (default `3000`)
 - `ACTIONS_ENABLED` (`true`/`false`, default `true`)
-- `LOG_LEVEL` (`info`/`debug`, default `info`)
 - `ALLOWLIST_LOG_PATHS` (comma-separated absolute files or directories)
-- `LOKI_BASE_URL` (enables Loki log source for `/analyze/logs/batch` when set)
-- `LOKI_RULES_FILE` (required path to YAML rules file when `LOKI_BASE_URL` is set)
-- `LOKI_TIMEOUT_MS` (default `10000`; timeout for Loki `query_range`)
-- `LOKI_MAX_WINDOW_MINUTES` (default `60`; max `start`/`end` window for Loki query mode)
-- `LOKI_DEFAULT_WINDOW_MINUTES` (default `15`; default window when `start`/`end` omitted)
-- `LOKI_MAX_LINES_CAP` (default `2000`; cap for Loki query mode `limit`)
-- `LOKI_MAX_RESPONSE_BYTES` (default `2000000`; cap for Loki lines payload in query mode)
-- `LOKI_REQUIRE_SCOPE_LABELS` (default `true`; requires `host` or `unit` in query mode unless `allowUnscoped=true`)
-- `MAX_QUERY_HOURS` (max log query lookback window)
-- `MAX_LINES` (effective cap for collected lines)
-- `MAX_CONCURRENCY` (max allowed batch concurrency)
-- `DEBATE_MODEL_ALLOWLIST` (comma-separated model IDs allowed for `/v1/debate`)
-- `DEBATE_MAX_CONCURRENT` (default `1`; max active `/v1/debate` requests)
-- `LOG_BUFFER_MAX_ENTRIES` (default `2000`; in-memory API log buffer size for `/logs/*`)
 - `OPS_ENABLED` (`1` to expose `/logs/recent` and `/logs/metrics`; default disabled)
-- `STREAM_SUPPRESS_TOOLISH` (`1` to suppress tool-call-like SSE payloads; default preserves raw output)
 - `READINESS_TIMEOUT_MS` (default `1500`; timeout in ms for `/readyz` Ollama probe, clamped to `100..10000`)
 - `READINESS_STRICT` (`1` or `0`, default `1`; when `1`, `/readyz` returns `503` if upstream is unavailable)
+- `STREAM_SUPPRESS_TOOLISH` (`1` to suppress tool-call-like SSE payloads; default preserves raw output)
+- `LOG_LEVEL` (`info`/`debug`, default `info`)
+- `LOG_BUFFER_MAX_ENTRIES` (default `2000`; in-memory API log buffer size for `/logs/*`)
+- `DEBATE_MODEL_ALLOWLIST` (comma-separated model IDs allowed for `/v1/debate`)
+- `DEBATE_MAX_CONCURRENT` (default `1`; max active `/v1/debate` requests)
+- `BLACKICE_GENERAL_MODEL` (default `llama3.1:8b`)
+- `BLACKICE_CODE_MODEL` (default `qwen2.5-coder:14b`)
+- `BLACKICE_LONGFORM_MODEL` (default `qwen2.5:14b`)
+- `BLACKICE_OBSERVABILITY_MODEL` (default `qwen2.5:14b`)
+- `BLACKICE_POLICY_FALLBACK_MODEL` (optional explicit fallback model)
 - `BUILD_GIT_SHA` (optional; exposed by `GET /version`)
 - `BUILD_TIME` (optional ISO timestamp; exposed by `GET /version`)
 
@@ -141,13 +157,14 @@ units: [openclaw.service, blackice-router.service, promtail.service]
 
 Example file: `config/loki-rules.example.yaml`
 
-Environment config files:
+Runtime config files:
 - `config/blackice.local.yaml`
 - `config/blackice.e2e.yaml`
 - `config/blackice.prod.yaml`
 
 Config precedence:
 - `BLACKICE_CONFIG_FILE` selects which YAML file is loaded.
+- The selected YAML file owns Ollama, Loki, and limit values.
 
 ## Testing
 Run the full test suite:
@@ -319,9 +336,6 @@ API metrics (last 1 hour):
 ```bash
 curl -sS "http://127.0.0.1:3000/logs/metrics?window=1h"
 ```
-
-Readiness check:
-
 
 Readiness check:
 ```bash
