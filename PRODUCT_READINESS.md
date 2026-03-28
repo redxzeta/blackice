@@ -14,7 +14,7 @@ Build a single OpenAI-compatible policy/router endpoint for OpenClaw, so OpenCla
 - HTTP server: Express.
 - Validation: zod schemas.
 - LLM SDK: AI SDK v5.
-- LLM provider: `ollama-ai-provider-v2` at `OLLAMA_BASE_URL`.
+- LLM provider: `ollama-ai-provider-v2`, configured through the YAML selected by `BLACKICE_CONFIG_FILE`.
 - Main endpoint: `POST /v1/chat/completions`.
 - Policy simulation endpoint: `POST /v1/policy/dry-run` (classify + route explain, no execution).
 - Debate endpoint: `POST /v1/debate`.
@@ -123,27 +123,74 @@ Per request structured logs include:
 
 ## Rollout Plan
 1. Deploy behind private network in LXC.
-2. Set env vars and allowlist paths.
-3. Smoke test `/healthz` and chat/action curls.
+2. Select the target YAML config via `BLACKICE_CONFIG_FILE` and set the small set of direct env vars and allowlist paths needed by that host.
+3. Smoke test `/healthz`, `/readyz`, and chat/action curls.
 4. Configure OpenClaw provider to this router endpoint.
 5. Enable streaming in OpenClaw and verify token flow.
 6. Monitor logs for action usage, latency, and failures.
 7. Tighten allowlists and disable unused actions.
 
-## Environment Variables
-- `OLLAMA_BASE_URL` (default: `http://localhost:11434`)
-- `PORT` (default: `3000`)
+## Configuration
+Runtime configuration is primarily YAML-driven. `BLACKICE_CONFIG_FILE` selects the config file to load, and `./config/blackice.local.yaml` is the default when no override is provided.
+
+YAML-backed settings:
+- `server.port`
+- `readiness.timeoutMs`
+- `readiness.strict`
+- `ops.enabled`
+- `ops.logBufferMaxEntries`
+- `debate.maxConcurrent`
+- `debate.modelAllowlist`
+- `ollama.baseUrl`
+- `ollama.model`
+- `ollama.timeoutMs`
+- `ollama.retryAttempts`
+- `ollama.retryBackoffMs`
+- `loki.baseUrl`
+- `loki.timeoutMs`
+- `loki.maxWindowMinutes`
+- `loki.defaultWindowMinutes`
+- `loki.maxLinesCap`
+- `loki.maxResponseBytes`
+- `loki.requireScopeLabels`
+- `loki.rulesFile`
+- `limits.logCollectionTimeoutMs`
+- `limits.maxCommandBytes`
+- `limits.maxQueryHours`
+- `limits.maxLinesCap`
+- `limits.maxConcurrency`
+- `limits.maxLogChars`
+
+Direct environment variables read by the process:
+- `BLACKICE_CONFIG_FILE` (selects the YAML config file)
+- `API_TOKEN` (optional bearer token for non-exempt API routes)
+- `AUTH_EXEMPT_PATHS` (optional CSV; defaults to `/healthz,/readyz,/version`)
 - `ACTIONS_ENABLED` (`true`/`false`, default: `true`)
-- `LOG_LEVEL` (`info`/`debug`, default: `info`)
 - `ALLOWLIST_LOG_PATHS` (comma-separated absolute files or directories)
-- `DEBATE_MODEL_ALLOWLIST` (comma-separated model IDs allowed for debate route)
-- `DEBATE_MAX_CONCURRENT` (default `1`; max active debate requests)
+- `LOG_LEVEL` (`info`/`debug`, default: `info`)
+- `METRICS_ENABLED` (`1` or `0`, default `1`; controls the Prometheus metrics endpoint)
+- `METRICS_EXPOSE_PATH` (default `/metrics`; HTTP path for Prometheus exposition)
+- `STREAM_SUPPRESS_TOOLISH` (`1` to suppress tool-call-like SSE payloads; default preserves raw output)
+- `MODEL_PREFLIGHT_ON_START` (`1` to fail startup when the configured Ollama model is missing; default `0`)
+- `MODEL_PREFLIGHT_TIMEOUT_MS` (default `2000`; timeout in ms for `/v1/models/check` and startup preflight, clamped to `200..10000`)
+- `BLACKICE_GENERAL_MODEL` (default `llama3.1:8b`)
+- `BLACKICE_CODE_MODEL` (default `qwen2.5-coder:14b`)
+- `BLACKICE_LONGFORM_MODEL` (default `qwen2.5:14b`)
+- `BLACKICE_OBSERVABILITY_MODEL` (default `qwen2.5:14b`)
+- `BLACKICE_POLICY_FALLBACK_MODEL` (optional explicit fallback model)
+- `BUILD_GIT_SHA` (optional; exposed by `GET /version`)
+- `BUILD_TIME` (optional ISO timestamp; exposed by `GET /version`)
+
+If you need to change Ollama, debate concurrency, readiness, ops, or Loki connection details, update the selected YAML file rather than exporting a one-off env var.
 
 ## Run
 ```bash
 npm install
 npm run build
-PORT=3000 OLLAMA_BASE_URL=http://<OLLAMA_HOST>:11434 npm start
+BLACKICE_CONFIG_FILE=./config/blackice.local.yaml \
+ACTIONS_ENABLED=true \
+LOG_LEVEL=info \
+npm start
 ```
 
 ## Example curl: Streaming CHAT
