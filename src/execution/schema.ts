@@ -19,6 +19,8 @@ export const AuditEventTypeSchema = z.enum([
   'signing_succeeded',
   'signing_failed',
   'execution_requested',
+  'execution_pending',
+  'execution_cancelled',
   'execution_succeeded',
   'execution_failed',
   'intent_cancelled',
