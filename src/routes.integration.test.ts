@@ -214,6 +214,95 @@ describe('integration routes', () => {
     expect(res.body.route).toBeDefined()
   })
 
+  it('POST /v1/intents creates and returns an intent record', async () => {
+    const { createApp } = await import('./app.js')
+    const app = createApp(1)
+
+    const res = await request(app).post('/v1/intents').send({
+      idempotencyKey: 'idem-http-1',
+      accountId: 'acct-primary',
+      market: 'BTC-USD',
+      venue: 'paper',
+      side: 'buy',
+      quantity: 1,
+      notionalUsd: 12000,
+      ttlSeconds: 300,
+    })
+
+    expect(res.status).toBe(201)
+    expect(res.body.ok).toBe(true)
+    expect(res.body.intent.status).toBe('submitted')
+    expect(res.body.policy.allowedVenues).toContain('paper')
+  })
+
+  it('POST /v1/intents is idempotent on repeated idempotency keys', async () => {
+    const { createApp } = await import('./app.js')
+    const app = createApp(1)
+    const payload = {
+      idempotencyKey: 'idem-http-2',
+      accountId: 'acct-primary',
+      market: 'ETH-USD',
+      venue: 'paper',
+      side: 'sell',
+      quantity: 2,
+      notionalUsd: 6000,
+      ttlSeconds: 300,
+    }
+
+    const first = await request(app).post('/v1/intents').send(payload)
+    const second = await request(app).post('/v1/intents').send(payload)
+
+    expect(first.status).toBe(201)
+    expect(second.status).toBe(200)
+    expect(second.body.created).toBe(false)
+    expect(second.body.intent.intentId).toBe(first.body.intent.intentId)
+  })
+
+  it('POST /v1/intents/:intentId/confirm and /execute complete the lifecycle', async () => {
+    const { createApp } = await import('./app.js')
+    const app = createApp(1)
+
+    const submit = await request(app).post('/v1/intents').send({
+      idempotencyKey: 'idem-http-3',
+      accountId: 'acct-primary',
+      market: 'SOL-USD',
+      venue: 'paper',
+      side: 'buy',
+      quantity: 10,
+      notionalUsd: 1500,
+      ttlSeconds: 300,
+    })
+    const intentId = submit.body.intent.intentId
+
+    const confirm = await request(app).post(`/v1/intents/${intentId}/confirm`).send({})
+    const execute = await request(app).post(`/v1/intents/${intentId}/execute`).send({})
+
+    expect(confirm.status).toBe(200)
+    expect(confirm.body.intent.status).toBe('confirmed')
+    expect(execute.status).toBe(200)
+    expect(execute.body.intent.status).toBe('executed')
+    expect(execute.body.intent.orders).toHaveLength(1)
+  })
+
+  it('POST /v1/intents rejects disallowed venues', async () => {
+    const { createApp } = await import('./app.js')
+    const app = createApp(1)
+
+    const res = await request(app).post('/v1/intents').send({
+      idempotencyKey: 'idem-http-4',
+      accountId: 'acct-primary',
+      market: 'BTC-USD',
+      venue: 'kraken',
+      side: 'buy',
+      quantity: 1,
+      notionalUsd: 1000,
+      ttlSeconds: 300,
+    })
+
+    expect(res.status).toBe(422)
+    expect(res.body.code).toBe('venue_not_allowed')
+  })
+
   it('POST /analyze/logs returns validation error for bad payload', async () => {
     const { createApp } = await import('./app.js')
     const app = createApp(1)
