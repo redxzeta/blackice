@@ -246,13 +246,39 @@ export class ExecutionService {
       })
 
       intent.orders.push(order)
-      intent.status = 'executed'
-      intent.executedAt = nowIso
+
+      if (execution.status === 'filled') {
+        intent.status = 'executed'
+        intent.executedAt = nowIso
+        intent.updatedAt = nowIso
+        this.appendAuditEvent(intent, 'execution_succeeded', requestId, {
+          externalOrderId: execution.externalOrderId,
+          orderStatus: execution.status,
+        })
+        return intent
+      }
+
+      if (execution.status === 'pending' || execution.status === 'placed') {
+        intent.status = 'execution_pending'
+        intent.updatedAt = nowIso
+        this.appendAuditEvent(intent, 'execution_pending', requestId, {
+          externalOrderId: execution.externalOrderId,
+          orderStatus: execution.status,
+        })
+        return intent
+      }
+
+      intent.status = 'confirmed'
       intent.updatedAt = nowIso
-      this.appendAuditEvent(intent, 'execution_succeeded', requestId, {
-        externalOrderId: execution.externalOrderId,
-        orderStatus: execution.status,
-      })
+      this.appendAuditEvent(
+        intent,
+        execution.status === 'cancelled' ? 'execution_cancelled' : 'execution_failed',
+        requestId,
+        {
+          externalOrderId: execution.externalOrderId,
+          orderStatus: execution.status,
+        }
+      )
       return intent
     } catch (error) {
       const nowIso = this.now().toISOString()
@@ -270,8 +296,10 @@ export class ExecutionService {
     if (intent.status === 'cancelled') {
       return intent
     }
-    if (intent.status === 'executed') {
-      throw new IntentStateError(`Intent ${intentId} cannot be cancelled after execution`)
+    if (intent.status === 'executed' || intent.status === 'execution_pending') {
+      throw new IntentStateError(
+        `Intent ${intentId} cannot be cancelled from status ${intent.status}`
+      )
     }
 
     const nowIso = this.now().toISOString()

@@ -26,6 +26,17 @@ const validIntent = {
   ttlSeconds: 300,
 }
 
+function createDeferredPromise<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+
+  return { promise, resolve, reject }
+}
+
 describe('ExecutionService', () => {
   it('supports idempotent submit retries', () => {
     const { service } = buildService()
@@ -109,6 +120,52 @@ describe('ExecutionService', () => {
     expect(stored.auditTrail.at(-1)?.type).toBe('execution_failed')
   })
 
+  it('keeps the intent execution_pending when the venue returns a pending order', async () => {
+    const service = new ExecutionService({
+      venueExecutor: {
+        async placeOrder() {
+          return {
+            externalOrderId: 'venue-pending-1',
+            status: 'pending' as const,
+          }
+        },
+      },
+    })
+
+    const { intent } = service.submitIntent(validIntent, 'req-1')
+    service.confirmIntent(intent.intentId, 'req-2')
+
+    const result = await service.executeIntent(intent.intentId, 'req-3')
+
+    expect(result.status).toBe('execution_pending')
+    expect(result.executedAt).toBeUndefined()
+    expect(result.orders.at(-1)?.status).toBe('pending')
+    expect(result.auditTrail.at(-1)?.type).toBe('execution_pending')
+  })
+
+  it('keeps the intent confirmed when the venue returns a cancelled order', async () => {
+    const service = new ExecutionService({
+      venueExecutor: {
+        async placeOrder() {
+          return {
+            externalOrderId: 'venue-cancelled-1',
+            status: 'cancelled' as const,
+          }
+        },
+      },
+    })
+
+    const { intent } = service.submitIntent(validIntent, 'req-1')
+    service.confirmIntent(intent.intentId, 'req-2')
+
+    const result = await service.executeIntent(intent.intentId, 'req-3')
+
+    expect(result.status).toBe('confirmed')
+    expect(result.executedAt).toBeUndefined()
+    expect(result.orders.at(-1)?.status).toBe('cancelled')
+    expect(result.auditTrail.at(-1)?.type).toBe('execution_cancelled')
+  })
+
   it('blocks execution after ttl expiry', async () => {
     const { service, advanceTime } = buildService()
 
@@ -129,5 +186,28 @@ describe('ExecutionService', () => {
     await service.executeIntent(intent.intentId, 'req-3')
 
     expect(() => service.cancelIntent(intent.intentId, 'req-4')).toThrowError(IntentStateError)
+  })
+
+  it('rejects cancellation while execution is pending', async () => {
+    const signerGate = createDeferredPromise<{ signerRef: string }>()
+    const service = new ExecutionService({
+      signer: {
+        async signIntent() {
+          return signerGate.promise
+        },
+      },
+    })
+
+    const { intent } = service.submitIntent(validIntent, 'req-1')
+    service.confirmIntent(intent.intentId, 'req-2')
+
+    const executionPromise = service.executeIntent(intent.intentId, 'req-3')
+    await Promise.resolve()
+
+    expect(service.getIntent(intent.intentId).status).toBe('execution_pending')
+    expect(() => service.cancelIntent(intent.intentId, 'req-4')).toThrowError(IntentStateError)
+
+    signerGate.resolve({ signerRef: 'local-signer:test' })
+    await expect(executionPromise).resolves.toMatchObject({ status: 'executed' })
   })
 })
