@@ -53,6 +53,34 @@ pnpm run dev
 - Canonical runtime source lives in `src/` (TypeScript).
 - Legacy root JavaScript modules were removed; runtime code should live under `src/` only.
 
+## First-time contributors
+Start here:
+- `src/app.ts`
+- `src/routes/chatCompletions.ts`
+- `src/routes/intents.ts`
+- `src/chat/routeResolution.ts`
+
+Higher-complexity areas:
+- `src/logExplainer/route.ts`
+- `src/logExplainer/logCollector.ts`
+
+Recommended reading order:
+1. `README.md`
+2. `src/app.ts`
+3. `src/routes/chatCompletions.ts`
+4. `src/routes/intents.ts`
+5. `src/logExplainer/*`
+
+Smallest useful local workflow:
+- `pnpm install`
+- `pnpm run build`
+- `pnpm test`
+- `pnpm run test:unit`
+- `pnpm run test:integration`
+- `BLACKICE_CONFIG_FILE=./config/blackice.local.yaml ACTIONS_ENABLED=true LOG_LEVEL=info pnpm run dev`
+
+Use `config/blackice.local.yaml` for local development, selected via `BLACKICE_CONFIG_FILE=./config/blackice.local.yaml`.
+
 ## Local Git Hooks
 - `pre-commit` formats staged JS/TS/JSON files with Biome and re-stages the formatted content before the commit completes.
 - `pre-push` checks files changed on the branch against `origin/main` and blocks the push if formatting drift remains.
