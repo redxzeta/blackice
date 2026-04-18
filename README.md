@@ -6,6 +6,7 @@ OpenAI-compatible policy/router server for OpenClaw.
 - OpenClaw calls this server as its only provider.
 - This server routes to local Ollama models.
 - Supports CHAT (streaming) and ACTION (non-streaming) envelopes.
+- Includes a first execution-boundary slice for trade intents under `/v1/intents`.
 
 ## Architecture
 ```mermaid
@@ -66,6 +67,12 @@ pnpm run dev
 - `GET /analyze/logs/status`
 - `GET /analyze/logs/metadata`
 - `POST /v1/policy/dry-run`
+- `POST /v1/intents`
+- `POST /v1/intents/:intentId/confirm`
+- `POST /v1/intents/:intentId/execute`
+- `POST /v1/intents/:intentId/cancel`
+- `GET /v1/intents`
+- `GET /v1/intents/:intentId`
 - `GET /logs/recent` *(requires `ops.enabled: true` in the selected YAML config)*
 - `GET /logs/metrics` *(requires `ops.enabled: true` in the selected YAML config)*
 - `GET /metrics` *(requires `METRICS_ENABLED=1`, default enabled; path configurable via `METRICS_EXPOSE_PATH`)*
@@ -186,6 +193,8 @@ Run the full test suite:
 ```bash
 pnpm test
 ```
+
+Execution-boundary architecture notes live in `BLACKICE_EXECUTION_BOUNDARY.md`.
 
 Run only unit tests:
 ```bash

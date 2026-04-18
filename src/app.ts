@@ -8,6 +8,7 @@ import { registerPolicyRoutes } from './routes/policy.js'
 import { registerDebateRoutes } from './routes/debate.js'
 import { registerModelRoutes } from './routes/models.js'
 import { registerOpsRoutes } from './routes/ops.js'
+import { registerIntentRoutes } from './routes/intents.js'
 import { checkReadiness, readinessStrict, readinessTimeoutMs } from './readiness.js'
 
 export function createApp(maxActiveDebates: number) {
@@ -28,6 +29,7 @@ export function createApp(maxActiveDebates: number) {
   registerDebateRoutes(app, maxActiveDebates)
   registerModelRoutes(app)
   registerOpsRoutes(app, versionInfo)
+  registerIntentRoutes(app)
 
   app.get('/readyz', async (_req, res) => {
     const readiness = await checkReadiness()
