@@ -27,6 +27,15 @@ const DEFAULT_OLLAMA_RETRY_BACKOFF_MS = 1_000
 const DEFAULT_LOKI_MAX_WINDOW_MINUTES = 60
 const DEFAULT_LOKI_DEFAULT_WINDOW_MINUTES = 15
 const DEFAULT_LOKI_REQUIRE_SCOPE_LABELS = true
+const DEFAULT_MARKET_DATA_MAX_CANDIDATES = 25
+const DEFAULT_MARKET_DATA_MIN_LIQUIDITY_USD = 0
+const DEFAULT_MARKET_DATA_MIN_DEPTH_USD = 0
+const DEFAULT_MARKET_DATA_MAX_SPREAD_BPS = 500
+const DEFAULT_EXECUTION_DEFAULT_VENUE = 'paper'
+const DEFAULT_EXECUTION_MAX_POSITION_USD = 1_000
+const DEFAULT_EXECUTION_REQUIRE_PREFLIGHT = true
+const DEFAULT_EXECUTION_SIGNER_KIND = 'mock'
+const DEFAULT_EXECUTION_STORAGE_KIND = 'memory'
 
 function clampInt(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
@@ -79,6 +88,27 @@ const YamlConfigSchema = z
         rulesFile: z.string().trim().optional(),
       })
       .optional(),
+    marketData: z
+      .object({
+        discoveryBaseUrl: z.string().trim().optional(),
+        orderbookBaseUrl: z.string().trim().optional(),
+        maxCandidates: z.number().int().min(1).max(500).optional(),
+        minLiquidityUsd: z.number().nonnegative().optional(),
+        minDepthUsd: z.number().nonnegative().optional(),
+        maxSpreadBps: z.number().nonnegative().optional(),
+        excludedEventTypes: z.array(z.string().trim().min(1)).optional(),
+      })
+      .optional(),
+    execution: z
+      .object({
+        defaultVenue: z.string().trim().min(1).optional(),
+        allowedVenues: z.array(z.string().trim().min(1)).optional(),
+        requirePreflight: z.boolean().optional(),
+        maxPositionUsd: z.number().positive().optional(),
+        signerKind: z.string().trim().min(1).optional(),
+        storageKind: z.string().trim().min(1).optional(),
+      })
+      .optional(),
     limits: z
       .object({
         logCollectionTimeoutMs: z.number().int().positive().optional(),
@@ -127,6 +157,23 @@ const RuntimeConfigSchema = z
       requireScopeLabels: z.boolean(),
       rulesFile: z.string(),
     }),
+    marketData: z.object({
+      discoveryBaseUrl: z.string(),
+      orderbookBaseUrl: z.string(),
+      maxCandidates: z.number().int().min(1).max(500),
+      minLiquidityUsd: z.number().nonnegative(),
+      minDepthUsd: z.number().nonnegative(),
+      maxSpreadBps: z.number().nonnegative(),
+      excludedEventTypes: z.array(z.string().min(1)),
+    }),
+    execution: z.object({
+      defaultVenue: z.string().min(1),
+      allowedVenues: z.array(z.string().min(1)).min(1),
+      requirePreflight: z.boolean(),
+      maxPositionUsd: z.number().positive(),
+      signerKind: z.string().min(1),
+      storageKind: z.string().min(1),
+    }),
     limits: z.object({
       logCollectionTimeoutMs: z.number().int().positive(),
       maxCommandBytes: z.number().int().positive(),
@@ -171,6 +218,8 @@ export function getRuntimeConfig(): RuntimeConfig {
   const debateYaml = yamlConfig.debate ?? {}
   const ollamaYaml = yamlConfig.ollama ?? {}
   const lokiYaml = yamlConfig.loki ?? {}
+  const marketDataYaml = yamlConfig.marketData ?? {}
+  const executionYaml = yamlConfig.execution ?? {}
   const limitsYaml = yamlConfig.limits ?? {}
   const configDir = path.dirname(configFile)
 
@@ -232,6 +281,27 @@ export function getRuntimeConfig(): RuntimeConfig {
     rulesFile,
   }
 
+  const marketData = {
+    discoveryBaseUrl: String(marketDataYaml.discoveryBaseUrl ?? '').trim(),
+    orderbookBaseUrl: String(marketDataYaml.orderbookBaseUrl ?? '').trim(),
+    maxCandidates: marketDataYaml.maxCandidates ?? DEFAULT_MARKET_DATA_MAX_CANDIDATES,
+    minLiquidityUsd: marketDataYaml.minLiquidityUsd ?? DEFAULT_MARKET_DATA_MIN_LIQUIDITY_USD,
+    minDepthUsd: marketDataYaml.minDepthUsd ?? DEFAULT_MARKET_DATA_MIN_DEPTH_USD,
+    maxSpreadBps: marketDataYaml.maxSpreadBps ?? DEFAULT_MARKET_DATA_MAX_SPREAD_BPS,
+    excludedEventTypes: marketDataYaml.excludedEventTypes ?? [],
+  }
+
+  const execution = {
+    defaultVenue: String(executionYaml.defaultVenue ?? DEFAULT_EXECUTION_DEFAULT_VENUE).trim(),
+    allowedVenues: executionYaml.allowedVenues?.map((venue) => venue.trim()).filter(Boolean) ?? [
+      DEFAULT_EXECUTION_DEFAULT_VENUE,
+    ],
+    requirePreflight: executionYaml.requirePreflight ?? DEFAULT_EXECUTION_REQUIRE_PREFLIGHT,
+    maxPositionUsd: executionYaml.maxPositionUsd ?? DEFAULT_EXECUTION_MAX_POSITION_USD,
+    signerKind: String(executionYaml.signerKind ?? DEFAULT_EXECUTION_SIGNER_KIND).trim(),
+    storageKind: String(executionYaml.storageKind ?? DEFAULT_EXECUTION_STORAGE_KIND).trim(),
+  }
+
   cachedRuntimeConfig = RuntimeConfigSchema.parse({
     configFile,
     server,
@@ -240,6 +310,8 @@ export function getRuntimeConfig(): RuntimeConfig {
     debate,
     ollama,
     loki,
+    marketData,
+    execution,
     limits,
   })
   return cachedRuntimeConfig
