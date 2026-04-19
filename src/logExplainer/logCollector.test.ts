@@ -18,7 +18,7 @@ loki:
   rulesFile: ./loki-rules.yaml
 `
   )
-writeFileSync(
+  writeFileSync(
     rulesFile,
     `allowedLabels:
   - job
@@ -84,7 +84,7 @@ describe('log explainer Loki helpers', () => {
         contains: 'foo "bar" \\ baz',
         regex: 'error\\d+',
       })
-    ).toBe('{app="api",host="node-1",job="blackice"} |= "foo \\\"bar\\\" \\\\ baz" |~ "error\\\\d+"')
+    ).toBe('{app="api",host="node-1",job="blackice"} |= "foo \\"bar\\" \\\\ baz" |~ "error\\\\d+"')
 
     const result = await collectLokiBatchLogs({
       source: 'loki',
@@ -94,8 +94,12 @@ describe('log explainer Loki helpers', () => {
     })
 
     expect(result.query).toBe('{app="api",host="node-1",job="blackice"} |= "hello"')
-    expect(result.logs).toContain('1970-01-01T00:00:00.001Z [host=node-1,unit=blackice.service] first')
-    expect(result.logs).toContain('1970-01-01T00:00:00.002Z [host=node-1,unit=blackice.service] second')
+    expect(result.logs).toContain(
+      '1970-01-01T00:00:00.001Z [host=node-1,unit=blackice.service] first'
+    )
+    expect(result.logs).toContain(
+      '1970-01-01T00:00:00.002Z [host=node-1,unit=blackice.service] second'
+    )
   })
 
   it('rejects unscoped Loki filters before issuing a query', async () => {

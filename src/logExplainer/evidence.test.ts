@@ -18,7 +18,7 @@ loki:
   rulesFile: ./loki-rules.yaml
 `
   )
-writeFileSync(
+  writeFileSync(
     rulesFile,
     `allowedLabels:
   - job
