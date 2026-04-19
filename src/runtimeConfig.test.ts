@@ -133,4 +133,21 @@ server:
       },
     })
   })
+
+  it('aligns default allowed venues with a configured default venue', async () => {
+    const configFile = writeConfig(`version: 1
+execution:
+  defaultVenue: sandbox
+`)
+
+    vi.stubEnv('BLACKICE_CONFIG_FILE', configFile)
+    const { getRuntimeConfig } = await import('./config/runtimeConfig.js')
+
+    expect(getRuntimeConfig()).toMatchObject({
+      execution: {
+        defaultVenue: 'sandbox',
+        allowedVenues: ['sandbox'],
+      },
+    })
+  })
 })

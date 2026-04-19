@@ -291,10 +291,12 @@ export function getRuntimeConfig(): RuntimeConfig {
     excludedEventTypes: marketDataYaml.excludedEventTypes ?? [],
   }
 
+  const defaultVenue = String(executionYaml.defaultVenue ?? DEFAULT_EXECUTION_DEFAULT_VENUE).trim()
+
   const execution = {
-    defaultVenue: String(executionYaml.defaultVenue ?? DEFAULT_EXECUTION_DEFAULT_VENUE).trim(),
+    defaultVenue,
     allowedVenues: executionYaml.allowedVenues?.map((venue) => venue.trim()).filter(Boolean) ?? [
-      DEFAULT_EXECUTION_DEFAULT_VENUE,
+      defaultVenue,
     ],
     requirePreflight: executionYaml.requirePreflight ?? DEFAULT_EXECUTION_REQUIRE_PREFLIGHT,
     maxPositionUsd: executionYaml.maxPositionUsd ?? DEFAULT_EXECUTION_MAX_POSITION_USD,
