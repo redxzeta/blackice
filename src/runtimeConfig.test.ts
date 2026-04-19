@@ -52,6 +52,24 @@ loki:
 
 limits:
   maxConcurrency: 7
+marketData:
+  discoveryBaseUrl: http://127.0.0.1:3101
+  orderbookBaseUrl: http://127.0.0.1:3201
+  maxCandidates: 40
+  minLiquidityUsd: 250
+  minDepthUsd: 125
+  maxSpreadBps: 120
+  excludedEventTypes:
+    - sports
+execution:
+  defaultVenue: paper
+  allowedVenues:
+    - paper
+    - sandbox
+  requirePreflight: false
+  maxPositionUsd: 2500
+  signerKind: backend
+  storageKind: sqlite
 `)
 
     vi.stubEnv('BLACKICE_CONFIG_FILE', configFile)
@@ -65,7 +83,71 @@ limits:
         maxConcurrent: 3,
         modelAllowlist: ['llama3.1:8b', 'qwen2.5:14b'],
       },
+      marketData: {
+        discoveryBaseUrl: 'http://127.0.0.1:3101',
+        orderbookBaseUrl: 'http://127.0.0.1:3201',
+        maxCandidates: 40,
+        minLiquidityUsd: 250,
+        minDepthUsd: 125,
+        maxSpreadBps: 120,
+        excludedEventTypes: ['sports'],
+      },
+      execution: {
+        defaultVenue: 'paper',
+        allowedVenues: ['paper', 'sandbox'],
+        requirePreflight: false,
+        maxPositionUsd: 2500,
+        signerKind: 'backend',
+        storageKind: 'sqlite',
+      },
       limits: { maxConcurrency: 7 },
+    })
+  })
+
+  it('fills defaults for the new market data and execution sections', async () => {
+    const configFile = writeConfig(`version: 1
+server:
+  port: 3000
+`)
+
+    vi.stubEnv('BLACKICE_CONFIG_FILE', configFile)
+    const { getRuntimeConfig } = await import('./config/runtimeConfig.js')
+
+    expect(getRuntimeConfig()).toMatchObject({
+      marketData: {
+        discoveryBaseUrl: '',
+        orderbookBaseUrl: '',
+        maxCandidates: 25,
+        minLiquidityUsd: 0,
+        minDepthUsd: 0,
+        maxSpreadBps: 500,
+        excludedEventTypes: [],
+      },
+      execution: {
+        defaultVenue: 'paper',
+        allowedVenues: ['paper'],
+        requirePreflight: true,
+        maxPositionUsd: 1000,
+        signerKind: 'mock',
+        storageKind: 'memory',
+      },
+    })
+  })
+
+  it('aligns default allowed venues with a configured default venue', async () => {
+    const configFile = writeConfig(`version: 1
+execution:
+  defaultVenue: sandbox
+`)
+
+    vi.stubEnv('BLACKICE_CONFIG_FILE', configFile)
+    const { getRuntimeConfig } = await import('./config/runtimeConfig.js')
+
+    expect(getRuntimeConfig()).toMatchObject({
+      execution: {
+        defaultVenue: 'sandbox',
+        allowedVenues: ['sandbox'],
+      },
     })
   })
 })
