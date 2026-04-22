@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto'
+import { getRuntimeConfig } from '../config/runtimeConfig.js'
+import type { ExecutionRepository } from './contracts.js'
+import { createExecutionRepository } from './repository.js'
 import {
   type AuditEvent,
   AuditEventSchema,
@@ -54,6 +57,7 @@ type ExecutionServiceOptions = {
   policy?: ExecutionPolicySnapshot
   signer?: Signer
   venueExecutor?: VenueExecutor
+  repository?: ExecutionRepository
   now?: () => Date
 }
 
@@ -82,17 +86,22 @@ class InMemoryVenueExecutor implements VenueExecutor {
 }
 
 export class ExecutionService {
-  private readonly intents = new Map<string, IntentRecord>()
-  private readonly idempotencyKeys = new Map<string, string>()
   private readonly policy: ExecutionPolicySnapshot
   private readonly signer: Signer
   private readonly venueExecutor: VenueExecutor
+  private readonly repository: ExecutionRepository
   private readonly now: () => Date
 
   constructor(options: ExecutionServiceOptions = {}) {
     this.policy = options.policy ?? DEFAULT_POLICY
     this.signer = options.signer ?? new InMemorySigner()
     this.venueExecutor = options.venueExecutor ?? new InMemoryVenueExecutor()
+    this.repository =
+      options.repository ??
+      createExecutionRepository({
+        storageKind: getRuntimeConfig().execution.storageKind,
+        storagePath: getRuntimeConfig().execution.storagePath,
+      })
     this.now = options.now ?? (() => new Date())
   }
 
@@ -101,12 +110,11 @@ export class ExecutionService {
   }
 
   listIntents(status?: IntentRecord['status']): IntentRecord[] {
-    const intents = Array.from(this.intents.values())
-    return status ? intents.filter((intent) => intent.status === status) : intents
+    return this.repository.listIntents(status)
   }
 
   getIntent(intentId: string): IntentRecord {
-    const intent = this.intents.get(intentId)
+    const intent = this.repository.getIntent(intentId)
     if (!intent) {
       throw new IntentNotFoundError(intentId)
     }
@@ -117,7 +125,7 @@ export class ExecutionService {
     input: SubmitIntentRequest,
     requestId: string
   ): { created: boolean; intent: IntentRecord } {
-    const existingIntentId = this.idempotencyKeys.get(input.idempotencyKey)
+    const existingIntentId = this.repository.getIntentIdByIdempotencyKey(input.idempotencyKey)
     if (existingIntentId) {
       const existingIntent = this.getIntent(existingIntentId)
       if (!this.matchesExistingIntent(existingIntent, input)) {
@@ -135,7 +143,7 @@ export class ExecutionService {
 
     const nowIso = this.now().toISOString()
     const intentId = input.intentId ?? randomUUID()
-    if (this.intents.has(intentId)) {
+    if (this.repository.getIntent(intentId)) {
       throw new IntentStateError(`Intent already exists: ${intentId}`)
     }
 
@@ -166,8 +174,8 @@ export class ExecutionService {
       notionalUsd: input.notionalUsd,
     })
 
-    this.intents.set(intent.intentId, intent)
-    this.idempotencyKeys.set(input.idempotencyKey, intent.intentId)
+    this.repository.saveIntent(intent)
+    this.repository.saveIdempotencyKey(input.idempotencyKey, intent.intentId)
 
     return { created: true, intent }
   }
@@ -188,6 +196,7 @@ export class ExecutionService {
     intent.confirmedAt = nowIso
     intent.updatedAt = nowIso
     this.appendAuditEvent(intent, 'intent_confirmed', requestId, {})
+    this.repository.saveIntent(intent)
     return intent
   }
 
@@ -209,17 +218,20 @@ export class ExecutionService {
     const requestedAt = this.now().toISOString()
     intent.status = 'execution_pending'
     intent.updatedAt = requestedAt
+    this.repository.saveIntent(intent)
     this.appendAuditEvent(intent, 'signing_requested', requestId, {})
 
     try {
       const signed = await this.signer.signIntent(intent)
       intent.signerRef = signed.signerRef
+      this.repository.saveIntent(intent)
       this.appendAuditEvent(intent, 'signing_succeeded', requestId, {
         signerRef: signed.signerRef,
       })
     } catch (error) {
       intent.status = 'confirmed'
       intent.updatedAt = this.now().toISOString()
+      this.repository.saveIntent(intent)
       this.appendAuditEvent(intent, 'signing_failed', requestId, {
         error: error instanceof Error ? error.message : String(error),
       })
@@ -246,11 +258,13 @@ export class ExecutionService {
       })
 
       intent.orders.push(order)
+      this.repository.saveIntent(intent)
 
       if (execution.status === 'filled') {
         intent.status = 'executed'
         intent.executedAt = nowIso
         intent.updatedAt = nowIso
+        this.repository.saveIntent(intent)
         this.appendAuditEvent(intent, 'execution_succeeded', requestId, {
           externalOrderId: execution.externalOrderId,
           orderStatus: execution.status,
@@ -261,6 +275,7 @@ export class ExecutionService {
       if (execution.status === 'pending' || execution.status === 'placed') {
         intent.status = 'execution_pending'
         intent.updatedAt = nowIso
+        this.repository.saveIntent(intent)
         this.appendAuditEvent(intent, 'execution_pending', requestId, {
           externalOrderId: execution.externalOrderId,
           orderStatus: execution.status,
@@ -270,6 +285,7 @@ export class ExecutionService {
 
       intent.status = 'confirmed'
       intent.updatedAt = nowIso
+      this.repository.saveIntent(intent)
       this.appendAuditEvent(
         intent,
         execution.status === 'cancelled' ? 'execution_cancelled' : 'execution_failed',
@@ -284,6 +300,7 @@ export class ExecutionService {
       const nowIso = this.now().toISOString()
       intent.status = 'confirmed'
       intent.updatedAt = nowIso
+      this.repository.saveIntent(intent)
       this.appendAuditEvent(intent, 'execution_failed', requestId, {
         error: error instanceof Error ? error.message : String(error),
       })
@@ -307,6 +324,7 @@ export class ExecutionService {
     intent.cancelledAt = nowIso
     intent.updatedAt = nowIso
     this.appendAuditEvent(intent, 'intent_cancelled', requestId, {})
+    this.repository.saveIntent(intent)
     return intent
   }
 
@@ -332,7 +350,8 @@ export class ExecutionService {
 
     const windowStart = this.now()
     windowStart.setUTCHours(0, 0, 0, 0)
-    const todayNotional = Array.from(this.intents.values())
+    const todayNotional = this.repository
+      .listIntents()
       .filter((intent) => Date.parse(intent.createdAt) >= windowStart.getTime())
       .reduce((total, intent) => total + intent.notionalUsd, 0)
 
@@ -350,16 +369,17 @@ export class ExecutionService {
     requestId: string,
     details: Record<string, unknown>
   ): void {
-    intent.auditTrail.push(
-      AuditEventSchema.parse({
-        eventId: randomUUID(),
-        intentId: intent.intentId,
-        type,
-        timestamp: this.now().toISOString(),
-        requestId,
-        details,
-      })
-    )
+    const event = AuditEventSchema.parse({
+      eventId: randomUUID(),
+      intentId: intent.intentId,
+      type,
+      timestamp: this.now().toISOString(),
+      requestId,
+      details,
+    })
+    intent.auditTrail.push(event)
+    this.repository.appendAuditEvent(event)
+    this.repository.saveIntent(intent)
   }
 
   private matchesExistingIntent(intent: IntentRecord, input: SubmitIntentRequest): boolean {

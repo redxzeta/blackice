@@ -1,4 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
+import { FileExecutionRepository } from './repository.js'
 import { ExecutionPolicyError, ExecutionService, IntentStateError } from './service.js'
 
 function buildService() {
@@ -25,6 +29,14 @@ const validIntent = {
   notionalUsd: 10_000,
   ttlSeconds: 300,
 }
+
+const tempDirs: string[] = []
+
+afterEach(() => {
+  while (tempDirs.length > 0) {
+    rmSync(tempDirs.pop() as string, { recursive: true, force: true })
+  }
+})
 
 function createDeferredPromise<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void
@@ -209,5 +221,31 @@ describe('ExecutionService', () => {
 
     signerGate.resolve({ signerRef: 'local-signer:test' })
     await expect(executionPromise).resolves.toMatchObject({ status: 'executed' })
+  })
+
+  it('reloads intents from a durable repository across service instances', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'blackice-service-repo-'))
+    tempDirs.push(dir)
+    const storagePath = path.join(dir, 'execution-state.json')
+
+    const firstRepository = new FileExecutionRepository(storagePath)
+    const firstService = new ExecutionService({
+      repository: firstRepository,
+      now: () => new Date('2026-04-18T12:00:00.000Z'),
+    })
+    const submitted = firstService.submitIntent(validIntent, 'req-1')
+
+    const secondRepository = new FileExecutionRepository(storagePath)
+    const secondService = new ExecutionService({
+      repository: secondRepository,
+      now: () => new Date('2026-04-18T12:00:01.000Z'),
+    })
+
+    expect(secondService.getIntent(submitted.intent.intentId)).toMatchObject({
+      intentId: submitted.intent.intentId,
+      idempotencyKey: validIntent.idempotencyKey,
+      status: 'submitted',
+    })
+    expect(secondService.listIntents()).toHaveLength(1)
   })
 })

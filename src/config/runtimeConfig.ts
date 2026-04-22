@@ -36,6 +36,7 @@ const DEFAULT_EXECUTION_MAX_POSITION_USD = 1_000
 const DEFAULT_EXECUTION_REQUIRE_PREFLIGHT = true
 const DEFAULT_EXECUTION_SIGNER_KIND = 'mock'
 const DEFAULT_EXECUTION_STORAGE_KIND = 'memory'
+const DEFAULT_EXECUTION_STORAGE_PATH = ''
 
 function clampInt(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
@@ -107,6 +108,7 @@ const YamlConfigSchema = z
         maxPositionUsd: z.number().positive().optional(),
         signerKind: z.string().trim().min(1).optional(),
         storageKind: z.string().trim().min(1).optional(),
+        storagePath: z.string().trim().optional(),
       })
       .optional(),
     limits: z
@@ -173,6 +175,7 @@ const RuntimeConfigSchema = z
       maxPositionUsd: z.number().positive(),
       signerKind: z.string().min(1),
       storageKind: z.string().min(1),
+      storagePath: z.string(),
     }),
     limits: z.object({
       logCollectionTimeoutMs: z.number().int().positive(),
@@ -302,6 +305,7 @@ export function getRuntimeConfig(): RuntimeConfig {
     maxPositionUsd: executionYaml.maxPositionUsd ?? DEFAULT_EXECUTION_MAX_POSITION_USD,
     signerKind: String(executionYaml.signerKind ?? DEFAULT_EXECUTION_SIGNER_KIND).trim(),
     storageKind: String(executionYaml.storageKind ?? DEFAULT_EXECUTION_STORAGE_KIND).trim(),
+    storagePath: String(executionYaml.storagePath ?? DEFAULT_EXECUTION_STORAGE_PATH).trim(),
   }
 
   cachedRuntimeConfig = RuntimeConfigSchema.parse({
