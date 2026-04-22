@@ -70,6 +70,7 @@ execution:
   maxPositionUsd: 2500
   signerKind: backend
   storageKind: sqlite
+  storagePath: ./.tmp/execution-state.json
 `)
 
     vi.stubEnv('BLACKICE_CONFIG_FILE', configFile)
@@ -99,6 +100,7 @@ execution:
         maxPositionUsd: 2500,
         signerKind: 'backend',
         storageKind: 'sqlite',
+        storagePath: './.tmp/execution-state.json',
       },
       limits: { maxConcurrency: 7 },
     })
@@ -130,6 +132,7 @@ server:
         maxPositionUsd: 1000,
         signerKind: 'mock',
         storageKind: 'memory',
+        storagePath: '',
       },
     })
   })
@@ -147,6 +150,7 @@ execution:
       execution: {
         defaultVenue: 'sandbox',
         allowedVenues: ['sandbox'],
+        storagePath: '',
       },
     })
   })

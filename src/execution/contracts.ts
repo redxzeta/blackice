@@ -121,11 +121,11 @@ export type ExecutionAdapter = {
 }
 
 export type ExecutionRepository = {
-  getIntent(intentId: string): Promise<IntentRecord | null>
-  listIntents(status?: IntentStatus): Promise<IntentRecord[]>
-  saveIntent(intent: IntentRecord): Promise<void>
-  getIntentIdByIdempotencyKey(idempotencyKey: string): Promise<string | null>
-  saveIdempotencyKey(idempotencyKey: string, intentId: string): Promise<void>
-  appendAuditEvent(event: AuditEvent): Promise<void>
-  appendExecutionLog(record: ExecutionLogRecord): Promise<void>
+  getIntent(intentId: string): IntentRecord | null
+  listIntents(status?: IntentStatus): IntentRecord[]
+  saveIntent(intent: IntentRecord): void
+  getIntentIdByIdempotencyKey(idempotencyKey: string): string | null
+  saveIdempotencyKey(idempotencyKey: string, intentId: string): void
+  appendAuditEvent(event: AuditEvent): void
+  appendExecutionLog(record: ExecutionLogRecord): void
 }
