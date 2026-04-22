@@ -111,6 +111,10 @@ export type OrderbookReadAdapter = {
   getSnapshot(candidate: CandidateRecord): Promise<OrderbookSnapshot>
 }
 
+export type CandidateEnrichmentAdapter = {
+  listEnrichedCandidates(query: CandidateDiscoveryQuery): Promise<EnrichedCandidateRecord[]>
+}
+
 export type SigningAdapter = {
   signExecutionRequest(request: ExecutionRequest): Promise<SignedExecutionRequest>
 }
