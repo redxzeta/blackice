@@ -1,15 +1,26 @@
 import { randomUUID } from 'node:crypto'
 import { getRuntimeConfig } from '../config/runtimeConfig.js'
-import type { ExecutionRepository } from './contracts.js'
+import type {
+  ExecutionAdapter,
+  ExecutionRepository,
+  SignedExecutionRequest,
+  SigningAdapter,
+} from './contracts.js'
+import {
+  buildExecutionRequestFromIntent,
+  buildOrderRecordFromExecutionLog,
+  createExecutionAdapter,
+  mapExecutionLogToAuditEventType,
+  mapExecutionLogToIntentStatus,
+} from './executionAdapter.js'
 import { createExecutionRepository } from './repository.js'
+import { createSigningAdapter } from './signing.js'
 import {
   type AuditEvent,
   AuditEventSchema,
   type ExecutionPolicySnapshot,
   type IntentRecord,
   IntentRecordSchema,
-  type OrderRecord,
-  OrderRecordSchema,
   type SubmitIntentRequest,
 } from './schema.js'
 
@@ -43,20 +54,10 @@ export class IntentNotFoundError extends Error {
   }
 }
 
-export type Signer = {
-  signIntent(intent: IntentRecord): Promise<{ signerRef: string }>
-}
-
-export type VenueExecutor = {
-  placeOrder(
-    intent: IntentRecord
-  ): Promise<{ externalOrderId: string; status: OrderRecord['status'] }>
-}
-
 type ExecutionServiceOptions = {
   policy?: ExecutionPolicySnapshot
-  signer?: Signer
-  venueExecutor?: VenueExecutor
+  signingAdapter?: SigningAdapter
+  executionAdapter?: ExecutionAdapter
   repository?: ExecutionRepository
   now?: () => Date
 }
@@ -68,34 +69,17 @@ const DEFAULT_POLICY: ExecutionPolicySnapshot = {
   maxTtlSeconds: 86_400,
 }
 
-class InMemorySigner implements Signer {
-  async signIntent(intent: IntentRecord): Promise<{ signerRef: string }> {
-    return { signerRef: `local-signer:${intent.intentId}` }
-  }
-}
-
-class InMemoryVenueExecutor implements VenueExecutor {
-  async placeOrder(
-    intent: IntentRecord
-  ): Promise<{ externalOrderId: string; status: OrderRecord['status'] }> {
-    return {
-      externalOrderId: `paper-${intent.intentId}`,
-      status: 'filled',
-    }
-  }
-}
-
 export class ExecutionService {
   private readonly policy: ExecutionPolicySnapshot
-  private readonly signer: Signer
-  private readonly venueExecutor: VenueExecutor
+  private readonly signingAdapter: SigningAdapter
+  private readonly executionAdapter: ExecutionAdapter
   private readonly repository: ExecutionRepository
   private readonly now: () => Date
 
   constructor(options: ExecutionServiceOptions = {}) {
     this.policy = options.policy ?? DEFAULT_POLICY
-    this.signer = options.signer ?? new InMemorySigner()
-    this.venueExecutor = options.venueExecutor ?? new InMemoryVenueExecutor()
+    this.signingAdapter = options.signingAdapter ?? createSigningAdapter()
+    this.executionAdapter = options.executionAdapter ?? createExecutionAdapter()
     this.repository =
       options.repository ??
       createExecutionRepository({
@@ -221,16 +205,20 @@ export class ExecutionService {
     this.repository.saveIntent(intent)
     this.appendAuditEvent(intent, 'signing_requested', requestId, {})
 
+    const executionRequest = buildExecutionRequestFromIntent(intent, requestId, requestedAt)
+    let signedRequest: SignedExecutionRequest
+
     try {
-      const signed = await this.signer.signIntent(intent)
-      intent.signerRef = signed.signerRef
+      signedRequest = await this.signingAdapter.signExecutionRequest(executionRequest)
+      intent.signerRef = signedRequest.signerRef
       this.repository.saveIntent(intent)
       this.appendAuditEvent(intent, 'signing_succeeded', requestId, {
-        signerRef: signed.signerRef,
+        signerRef: signedRequest.signerRef,
       })
     } catch (error) {
+      const nowIso = this.now().toISOString()
       intent.status = 'confirmed'
-      intent.updatedAt = this.now().toISOString()
+      intent.updatedAt = nowIso
       this.repository.saveIntent(intent)
       this.appendAuditEvent(intent, 'signing_failed', requestId, {
         error: error instanceof Error ? error.message : String(error),
@@ -241,58 +229,33 @@ export class ExecutionService {
     this.appendAuditEvent(intent, 'execution_requested', requestId, {})
 
     try {
-      const execution = await this.venueExecutor.placeOrder(intent)
-      const nowIso = this.now().toISOString()
-      const order = OrderRecordSchema.parse({
-        orderId: randomUUID(),
-        venue: intent.venue,
-        market: intent.market,
-        side: intent.side,
-        quantity: intent.quantity,
-        limitPrice: intent.limitPrice,
-        notionalUsd: intent.notionalUsd,
-        status: execution.status,
-        createdAt: nowIso,
-        updatedAt: nowIso,
-        externalOrderId: execution.externalOrderId,
+      const executionLog = await this.executionAdapter.placeOrder(signedRequest)
+      this.repository.appendExecutionLog(executionLog)
+
+      const nowIso = executionLog.recordedAt
+      const order = buildOrderRecordFromExecutionLog({
+        intent,
+        executionLog,
+        recordedAt: nowIso,
       })
 
       intent.orders.push(order)
-      this.repository.saveIntent(intent)
-
-      if (execution.status === 'filled') {
-        intent.status = 'executed'
-        intent.executedAt = nowIso
-        intent.updatedAt = nowIso
-        this.repository.saveIntent(intent)
-        this.appendAuditEvent(intent, 'execution_succeeded', requestId, {
-          externalOrderId: execution.externalOrderId,
-          orderStatus: execution.status,
-        })
-        return intent
-      }
-
-      if (execution.status === 'pending' || execution.status === 'placed') {
-        intent.status = 'execution_pending'
-        intent.updatedAt = nowIso
-        this.repository.saveIntent(intent)
-        this.appendAuditEvent(intent, 'execution_pending', requestId, {
-          externalOrderId: execution.externalOrderId,
-          orderStatus: execution.status,
-        })
-        return intent
-      }
-
-      intent.status = 'confirmed'
+      intent.status = mapExecutionLogToIntentStatus(executionLog.status)
       intent.updatedAt = nowIso
+
+      if (intent.status === 'executed') {
+        intent.executedAt = nowIso
+      }
+
       this.repository.saveIntent(intent)
       this.appendAuditEvent(
         intent,
-        execution.status === 'cancelled' ? 'execution_cancelled' : 'execution_failed',
+        mapExecutionLogToAuditEventType(executionLog.status),
         requestId,
         {
-          externalOrderId: execution.externalOrderId,
-          orderStatus: execution.status,
+          externalOrderId: executionLog.orderId,
+          executionStatus: executionLog.status,
+          logId: executionLog.logId,
         }
       )
       return intent
