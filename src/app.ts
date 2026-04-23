@@ -10,8 +10,16 @@ import { registerModelRoutes } from './routes/models.js'
 import { registerOpsRoutes } from './routes/ops.js'
 import { registerIntentRoutes } from './routes/intents.js'
 import { checkReadiness, readinessStrict, readinessTimeoutMs } from './readiness.js'
+import type { CandidateEnrichmentAdapter, PreflightEvaluator } from './execution/contracts.js'
+import type { ExecutionService } from './execution/service.js'
 
-export function createApp(maxActiveDebates: number) {
+type CreateAppOptions = {
+  executionService?: ExecutionService
+  candidateEnrichmentAdapter?: CandidateEnrichmentAdapter
+  preflightEvaluator?: PreflightEvaluator
+}
+
+export function createApp(maxActiveDebates: number, options: CreateAppOptions = {}) {
   const app = express()
   const versionInfo = getVersionInfo()
 
@@ -29,7 +37,10 @@ export function createApp(maxActiveDebates: number) {
   registerDebateRoutes(app, maxActiveDebates)
   registerModelRoutes(app)
   registerOpsRoutes(app, versionInfo)
-  registerIntentRoutes(app)
+  registerIntentRoutes(app, options.executionService, {
+    candidateEnrichmentAdapter: options.candidateEnrichmentAdapter,
+    preflightEvaluator: options.preflightEvaluator,
+  })
 
   app.get('/readyz', async (_req, res) => {
     const readiness = await checkReadiness()
