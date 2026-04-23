@@ -3,6 +3,7 @@ import {
   CandidateRecordSchema,
   EnrichedCandidateRecordSchema,
   ExecutionLogRecordSchema,
+  PreflightRequestSchema,
   ExecutionRequestSchema,
   PreflightResultSchema,
   SignedExecutionRequestSchema,
@@ -67,9 +68,32 @@ describe('execution foundation contracts', () => {
         },
       ],
     })
+    const preflightRequest = PreflightRequestSchema.parse({
+      candidate: {
+        marketId: 'mkt-1',
+        eventId: 'evt-1',
+        slug: 'btc-above-100k',
+        question: 'Will BTC close above 100k?',
+        marketType: 'standard',
+        tradable: true,
+        metadataComplete: true,
+        qualificationStatus: 'eligible',
+        qualificationReasons: [],
+        orderbook: {
+          bestBid: 0.48,
+          bestAsk: 0.52,
+          spreadBps: 400,
+          depthUsd: 1200,
+          asOf: '2026-04-19T12:00:00.000Z',
+        },
+        impliedProbability: 0.5,
+      },
+      positionUsd: 250,
+    })
 
     expect(signedRequest.signature).toBe('signed-payload')
     expect(preflight.checks[0]?.code).toBe('spread_above_limit')
+    expect(preflightRequest.positionUsd).toBe(250)
   })
 
   it('parses execution log records and rejects invalid candidate data', () => {
