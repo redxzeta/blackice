@@ -62,6 +62,12 @@ export const PreflightResultSchema = z.object({
   checks: z.array(PreflightCheckResultSchema).min(1),
 })
 
+export const PreflightRequestSchema = z.object({
+  candidate: EnrichedCandidateRecordSchema,
+  venue: z.string().min(1).optional(),
+  positionUsd: z.number().nonnegative().optional(),
+})
+
 export const ExecutionRequestSchema = z.object({
   requestId: z.string().min(1),
   intentId: z.string().min(1),
@@ -98,6 +104,7 @@ export type EnrichedCandidateRecord = z.infer<typeof EnrichedCandidateRecordSche
 export type PreflightCheckCode = z.infer<typeof PreflightCheckCodeSchema>
 export type PreflightCheckResult = z.infer<typeof PreflightCheckResultSchema>
 export type PreflightResult = z.infer<typeof PreflightResultSchema>
+export type PreflightRequest = z.infer<typeof PreflightRequestSchema>
 export type ExecutionRequest = z.infer<typeof ExecutionRequestSchema>
 export type SignedExecutionRequest = z.infer<typeof SignedExecutionRequestSchema>
 export type ExecutionLogRecord = z.infer<typeof ExecutionLogRecordSchema>
@@ -113,6 +120,10 @@ export type OrderbookReadAdapter = {
 
 export type CandidateEnrichmentAdapter = {
   listEnrichedCandidates(query: CandidateDiscoveryQuery): Promise<EnrichedCandidateRecord[]>
+}
+
+export type PreflightEvaluator = {
+  evaluate(request: PreflightRequest): Promise<PreflightResult>
 }
 
 export type SigningAdapter = {
