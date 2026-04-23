@@ -1,8 +1,13 @@
 import type { Express, Request, Response } from 'express'
+import { getRuntimeConfig } from '../config/runtimeConfig.js'
 import { log } from '../log.js'
 import { sendSimpleError } from '../http/errors.js'
 import { parseBodyOrRespond } from '../http/validation.js'
 import { getRequestId } from '../http/requestLogging.js'
+import { PublicCandidateDiscoveryAdapter } from '../execution/discovery.js'
+import { CandidateEnrichmentPipeline } from '../execution/enrichment.js'
+import { PublicOrderbookReadAdapter } from '../execution/orderbook.js'
+import { CandidatePreflightEngine } from '../execution/preflight.js'
 import {
   ExecutionPolicyError,
   ExecutionService,
@@ -12,15 +17,90 @@ import {
 import {
   IntentActionResponseSchema,
   IntentStatusSchema,
+  ExecuteIntentRequestSchema,
+  ExecuteIntentResponseSchema,
+  ListCandidatesResponseSchema,
+  ListCandidatesRequestSchema,
   ListIntentsResponseSchema,
+  PreflightActionResponseSchema,
   SubmitIntentRequestSchema,
   SubmitIntentResponseSchema,
 } from '../execution/schema.js'
+import {
+  PreflightRequestSchema,
+  type CandidateEnrichmentAdapter,
+  type PreflightEvaluator,
+} from '../execution/contracts.js'
+
+type IntentRouteOptions = {
+  candidateEnrichmentAdapter?: CandidateEnrichmentAdapter
+  preflightEvaluator?: PreflightEvaluator
+}
 
 export function registerIntentRoutes(
   app: Express,
-  executionService = new ExecutionService()
+  executionService = new ExecutionService(),
+  options: IntentRouteOptions = {}
 ): void {
+  const candidateEnrichmentAdapter =
+    options.candidateEnrichmentAdapter ??
+    new CandidateEnrichmentPipeline({
+      discoveryAdapter: new PublicCandidateDiscoveryAdapter(),
+      orderbookAdapter: new PublicOrderbookReadAdapter(),
+    })
+  const preflightEvaluator = options.preflightEvaluator ?? new CandidatePreflightEngine()
+
+  app.get('/v1/candidates', async (req: Request, res: Response) => {
+    const parsed = ListCandidatesRequestSchema.safeParse({
+      limit: parseOptionalInt(req.query.limit),
+      excludedEventTypes: parseOptionalStringArray(req.query.excludedEventTypes),
+    })
+    if (!parsed.success) {
+      res.status(400).json({
+        error: 'Invalid query parameters',
+        details: parsed.error.issues,
+      })
+      return
+    }
+
+    try {
+      const candidates = await candidateEnrichmentAdapter.listEnrichedCandidates(parsed.data)
+      res.status(200).json(
+        ListCandidatesResponseSchema.parse({
+          ok: true,
+          candidates,
+        })
+      )
+    } catch (error) {
+      respondExecutionError(res, error)
+    }
+  })
+
+  app.post('/v1/preflight', async (req: Request, res: Response) => {
+    const requestId = getRequestId(res)
+    const parsed = parseBodyOrRespond(PreflightRequestSchema, req.body, res)
+    if (!parsed) {
+      return
+    }
+
+    try {
+      const preflight = await preflightEvaluator.evaluate(parsed)
+      log.info('preflight_evaluated', {
+        request_id: requestId,
+        venue: preflight.venue,
+        ok: preflight.ok,
+      })
+      res.status(200).json(
+        PreflightActionResponseSchema.parse({
+          ok: true,
+          preflight,
+        })
+      )
+    } catch (error) {
+      respondExecutionError(res, error)
+    }
+  })
+
   app.post('/v1/intents', (req: Request, res: Response) => {
     const requestId = getRequestId(res)
     const parsed = parseBodyOrRespond(SubmitIntentRequestSchema, req.body, res)
@@ -93,8 +173,47 @@ export function registerIntentRoutes(
   app.post('/v1/intents/:intentId/execute', async (req: Request, res: Response) => {
     try {
       const requestId = getRequestId(res)
-      const intent = await executionService.executeIntent(req.params.intentId, requestId)
-      res.status(200).json(IntentActionResponseSchema.parse({ ok: true, intent }))
+      const parsed = parseBodyOrRespond(ExecuteIntentRequestSchema, req.body ?? {}, res)
+      if (!parsed) {
+        return
+      }
+
+      const intent = executionService.getIntent(req.params.intentId)
+      let preflight = undefined
+
+      if (parsed.preflight) {
+        preflight = await preflightEvaluator.evaluate({
+          ...parsed.preflight,
+          venue: intent.venue,
+          positionUsd: intent.notionalUsd,
+        })
+      }
+
+      if (requirePreflightExecution() && !preflight) {
+        res.status(422).json({
+          error: 'Preflight is required before execution',
+          code: 'preflight_required',
+        })
+        return
+      }
+
+      if (preflight && !preflight.ok) {
+        res.status(422).json({
+          error: 'Preflight failed',
+          code: 'preflight_failed',
+          preflight,
+        })
+        return
+      }
+
+      const executedIntent = await executionService.executeIntent(req.params.intentId, requestId)
+      res.status(200).json(
+        ExecuteIntentResponseSchema.parse({
+          ok: true,
+          intent: executedIntent,
+          preflight,
+        })
+      )
     } catch (error) {
       respondExecutionError(res, error)
     }
@@ -131,4 +250,28 @@ function respondExecutionError(res: Response, error: unknown): void {
   }
 
   sendSimpleError(res, 500, error instanceof Error ? error.message : 'Internal server error')
+}
+
+function requirePreflightExecution(): boolean {
+  return getRuntimeConfig().execution.requirePreflight
+}
+
+function parseOptionalInt(value: unknown): number | undefined {
+  if (typeof value !== 'string' || value.trim() === '') {
+    return undefined
+  }
+
+  const parsed = Number.parseInt(value, 10)
+  return Number.isNaN(parsed) ? Number.NaN : parsed
+}
+
+function parseOptionalStringArray(value: unknown): string[] | undefined {
+  if (typeof value !== 'string' || value.trim() === '') {
+    return undefined
+  }
+
+  return value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
 }

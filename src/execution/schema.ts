@@ -1,4 +1,10 @@
 import { z } from 'zod'
+import {
+  CandidateDiscoveryQuerySchema,
+  EnrichedCandidateRecordSchema,
+  PreflightRequestSchema,
+  PreflightResultSchema,
+} from './contracts.js'
 
 export const IntentStatusSchema = z.enum([
   'submitted',
@@ -108,9 +114,33 @@ export const IntentActionResponseSchema = z.object({
   intent: IntentRecordSchema,
 })
 
+export const ExecuteIntentRequestSchema = z
+  .object({
+    preflight: PreflightRequestSchema.optional(),
+  })
+  .default({})
+
+export const ExecuteIntentResponseSchema = z.object({
+  ok: z.literal(true),
+  intent: IntentRecordSchema,
+  preflight: PreflightResultSchema.optional(),
+})
+
 export const ListIntentsResponseSchema = z.object({
   ok: z.literal(true),
   intents: z.array(IntentRecordSchema),
+})
+
+export const ListCandidatesRequestSchema = CandidateDiscoveryQuerySchema
+
+export const ListCandidatesResponseSchema = z.object({
+  ok: z.literal(true),
+  candidates: z.array(EnrichedCandidateRecordSchema),
+})
+
+export const PreflightActionResponseSchema = z.object({
+  ok: z.literal(true),
+  preflight: PreflightResultSchema,
 })
 
 export type SubmitIntentRequest = z.input<typeof SubmitIntentRequestSchema>

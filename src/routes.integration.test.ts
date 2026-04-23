@@ -7,6 +7,44 @@ vi.mock('./actions.js', () => ({
   executeAction: vi.fn(async () => ({ action: 'healthcheck', text: 'ok-healthcheck' })),
 }))
 
+function buildEnrichedCandidate() {
+  return {
+    marketId: 'market-http-1',
+    eventId: 'event-http-1',
+    slug: 'btc-above-100k',
+    question: 'Will BTC close above 100k?',
+    marketType: 'standard' as const,
+    tradable: true,
+    metadataComplete: true,
+    tags: [],
+    qualificationStatus: 'eligible' as const,
+    qualificationReasons: [],
+    orderbook: {
+      bestBid: 0.48,
+      bestAsk: 0.5,
+      spreadBps: 400,
+      depthUsd: 1200,
+      asOf: '2026-04-23T00:00:00.000Z',
+    },
+    impliedProbability: 0.49,
+  }
+}
+
+function buildPreflightResult(ok = true) {
+  return {
+    ok,
+    checkedAt: '2026-04-23T00:01:00.000Z',
+    venue: 'paper',
+    checks: [
+      {
+        code: ok ? 'candidate_not_tradable' : 'spread_above_limit',
+        ok,
+        message: ok ? 'Candidate is tradable' : 'Spread exceeds configured limit',
+      },
+    ],
+  }
+}
+
 describe('integration routes', () => {
   beforeEach(() => {
     vi.resetModules()
@@ -260,7 +298,11 @@ describe('integration routes', () => {
 
   it('POST /v1/intents/:intentId/confirm and /execute complete the lifecycle', async () => {
     const { createApp } = await import('./app.js')
-    const app = createApp(1)
+    const app = createApp(1, {
+      preflightEvaluator: {
+        evaluate: vi.fn().mockResolvedValue(buildPreflightResult(true)),
+      },
+    })
 
     const submit = await request(app).post('/v1/intents').send({
       idempotencyKey: 'idem-http-3',
@@ -275,13 +317,20 @@ describe('integration routes', () => {
     const intentId = submit.body.intent.intentId
 
     const confirm = await request(app).post(`/v1/intents/${intentId}/confirm`).send({})
-    const execute = await request(app).post(`/v1/intents/${intentId}/execute`).send({})
+    const execute = await request(app)
+      .post(`/v1/intents/${intentId}/execute`)
+      .send({
+        preflight: {
+          candidate: buildEnrichedCandidate(),
+        },
+      })
 
     expect(confirm.status).toBe(200)
     expect(confirm.body.intent.status).toBe('confirmed')
     expect(execute.status).toBe(200)
     expect(execute.body.intent.status).toBe('executed')
     expect(execute.body.intent.orders).toHaveLength(1)
+    expect(execute.body.preflight.ok).toBe(true)
   })
 
   it('POST /v1/intents rejects disallowed venues', async () => {
@@ -301,6 +350,93 @@ describe('integration routes', () => {
 
     expect(res.status).toBe(422)
     expect(res.body.code).toBe('venue_not_allowed')
+  })
+
+  it('GET /v1/candidates returns enriched candidates from the route adapter', async () => {
+    const { createApp } = await import('./app.js')
+    const app = createApp(1, {
+      candidateEnrichmentAdapter: {
+        listEnrichedCandidates: vi.fn().mockResolvedValue([buildEnrichedCandidate()]),
+      },
+    })
+
+    const res = await request(app).get('/v1/candidates?limit=5')
+
+    expect(res.status).toBe(200)
+    expect(res.body.ok).toBe(true)
+    expect(res.body.candidates).toHaveLength(1)
+    expect(res.body.candidates[0].marketId).toBe('market-http-1')
+  })
+
+  it('GET /v1/candidates rejects invalid query parameters', async () => {
+    const { createApp } = await import('./app.js')
+    const app = createApp(1, {
+      candidateEnrichmentAdapter: {
+        listEnrichedCandidates: vi.fn().mockResolvedValue([]),
+      },
+    })
+
+    const res = await request(app).get('/v1/candidates?limit=abc')
+
+    expect(res.status).toBe(400)
+    expect(res.body.error).toBe('Invalid query parameters')
+  })
+
+  it('POST /v1/preflight returns a structured preflight result', async () => {
+    const { createApp } = await import('./app.js')
+    const app = createApp(1, {
+      preflightEvaluator: {
+        evaluate: vi.fn().mockResolvedValue(buildPreflightResult(true)),
+      },
+    })
+
+    const res = await request(app).post('/v1/preflight').send({
+      candidate: buildEnrichedCandidate(),
+      positionUsd: 250,
+    })
+
+    expect(res.status).toBe(200)
+    expect(res.body.ok).toBe(true)
+    expect(res.body.preflight.ok).toBe(true)
+    expect(res.body.preflight.venue).toBe('paper')
+  })
+
+  it('POST /v1/intents/:intentId/execute blocks execution when preflight is missing or failed', async () => {
+    const { createApp } = await import('./app.js')
+    const app = createApp(1, {
+      preflightEvaluator: {
+        evaluate: vi.fn().mockResolvedValue(buildPreflightResult(false)),
+      },
+    })
+
+    const submit = await request(app).post('/v1/intents').send({
+      idempotencyKey: 'idem-http-5',
+      accountId: 'acct-primary',
+      market: 'DOGE-USD',
+      venue: 'paper',
+      side: 'buy',
+      quantity: 5,
+      notionalUsd: 250,
+      ttlSeconds: 300,
+    })
+    const intentId = submit.body.intent.intentId
+
+    await request(app).post(`/v1/intents/${intentId}/confirm`).send({})
+
+    const missingPreflight = await request(app).post(`/v1/intents/${intentId}/execute`).send({})
+    const failedPreflight = await request(app)
+      .post(`/v1/intents/${intentId}/execute`)
+      .send({
+        preflight: {
+          candidate: buildEnrichedCandidate(),
+        },
+      })
+
+    expect(missingPreflight.status).toBe(422)
+    expect(missingPreflight.body.code).toBe('preflight_required')
+    expect(failedPreflight.status).toBe(422)
+    expect(failedPreflight.body.code).toBe('preflight_failed')
+    expect(failedPreflight.body.preflight.ok).toBe(false)
   })
 
   it('POST /analyze/logs returns validation error for bad payload', async () => {
