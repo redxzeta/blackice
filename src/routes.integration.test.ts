@@ -471,6 +471,94 @@ describe('integration routes', () => {
     expect(executeAfterFailedPreflight.body.code).toBe('preflight_failed')
   })
 
+  it('POST /v1/intents/:intentId/refresh returns updated intent state when venue status advances', async () => {
+    const service = new (await import('./execution/service.js')).ExecutionService({
+      signingAdapter: {
+        async signExecutionRequest(request) {
+          return {
+            ...request,
+            signerRef: 'mock:paper',
+            signature: `sig:${request.requestId}`,
+          }
+        },
+      },
+      executionAdapter: {
+        async placeOrder() {
+          return {
+            logId: 'log-placed',
+            intentId: 'intent-refresh-http',
+            venue: 'paper',
+            status: 'accepted' as const,
+            recordedAt: '2026-04-23T00:02:00.000Z',
+            orderId: 'venue-refresh-http-1',
+            requestId: 'req-execute',
+            preflightOk: true,
+            details: {},
+          }
+        },
+        async cancelOrder() {
+          return {
+            logId: 'log-cancelled',
+            intentId: 'intent-refresh-http',
+            venue: 'paper',
+            status: 'cancelled' as const,
+            recordedAt: '2026-04-23T00:04:00.000Z',
+            orderId: 'venue-refresh-http-1',
+            requestId: 'req-cancel',
+            preflightOk: true,
+            details: {},
+          }
+        },
+        async getOrderStatus(orderId) {
+          return {
+            logId: 'log-filled',
+            intentId: 'intent-refresh-http',
+            venue: 'paper',
+            status: 'filled' as const,
+            recordedAt: '2026-04-23T00:03:00.000Z',
+            orderId,
+            requestId: 'req-refresh',
+            preflightOk: true,
+            details: {},
+          }
+        },
+      },
+    })
+    const { createApp } = await import('./app.js')
+    const app = createApp(1, {
+      executionService: service,
+      preflightEvaluator: {
+        evaluate: vi.fn().mockResolvedValue(buildPreflightResult(true)),
+      },
+    })
+
+    const submit = await request(app).post('/v1/intents').send({
+      intentId: 'intent-refresh-http',
+      idempotencyKey: 'idem-http-7',
+      accountId: 'acct-primary',
+      market: 'SOL-USD',
+      venue: 'paper',
+      side: 'buy',
+      quantity: 10,
+      notionalUsd: 1500,
+      ttlSeconds: 300,
+    })
+    const intentId = submit.body.intent.intentId
+
+    await request(app).post(`/v1/intents/${intentId}/confirm`).send({})
+    await request(app).post(`/v1/intents/${intentId}/preflight`).send({
+      candidate: buildEnrichedCandidate(),
+    })
+    await request(app).post(`/v1/intents/${intentId}/execute`).send({})
+
+    const refresh = await request(app).post(`/v1/intents/${intentId}/refresh`).send({})
+
+    expect(refresh.status).toBe(200)
+    expect(refresh.body.executionLog.status).toBe('filled')
+    expect(refresh.body.intent.status).toBe('executed')
+    expect(refresh.body.intent.orders.at(-1).status).toBe('filled')
+  })
+
   it('POST /analyze/logs returns validation error for bad payload', async () => {
     const { createApp } = await import('./app.js')
     const app = createApp(1)

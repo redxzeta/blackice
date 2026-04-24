@@ -2,6 +2,7 @@ import { z } from 'zod'
 import {
   CandidateDiscoveryQuerySchema,
   EnrichedCandidateRecordSchema,
+  ExecutionLogRecordSchema,
   PreflightRecordSchema,
   PreflightResultSchema,
 } from './contracts.js'
@@ -121,6 +122,12 @@ export const ExecuteIntentResponseSchema = z.object({
   ok: z.literal(true),
   intent: IntentRecordSchema,
   preflightRecord: PreflightRecordSchema.optional(),
+})
+
+export const IntentRefreshResponseSchema = z.object({
+  ok: z.literal(true),
+  intent: IntentRecordSchema,
+  executionLog: ExecutionLogRecordSchema.optional(),
 })
 
 export const ListIntentsResponseSchema = z.object({

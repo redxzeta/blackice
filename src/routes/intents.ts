@@ -19,6 +19,7 @@ import {
   IntentStatusSchema,
   ExecuteIntentRequestSchema,
   ExecuteIntentResponseSchema,
+  IntentRefreshResponseSchema,
   IntentPreflightResponseSchema,
   ListCandidatesResponseSchema,
   ListCandidatesRequestSchema,
@@ -244,6 +245,22 @@ export function registerIntentRoutes(
       const requestId = getRequestId(res)
       const intent = executionService.cancelIntent(req.params.intentId, requestId)
       res.status(200).json(IntentActionResponseSchema.parse({ ok: true, intent }))
+    } catch (error) {
+      respondExecutionError(res, error)
+    }
+  })
+
+  app.post('/v1/intents/:intentId/refresh', async (req: Request, res: Response) => {
+    try {
+      const requestId = getRequestId(res)
+      const result = await executionService.refreshIntent(req.params.intentId, requestId)
+      res.status(200).json(
+        IntentRefreshResponseSchema.parse({
+          ok: true,
+          intent: result.intent,
+          executionLog: result.executionLog,
+        })
+      )
     } catch (error) {
       respondExecutionError(res, error)
     }

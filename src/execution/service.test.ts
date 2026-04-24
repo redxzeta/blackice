@@ -297,6 +297,9 @@ describe('ExecutionService', () => {
         async cancelOrder() {
           return buildExecutionLog('cancelled')
         },
+        async getOrderStatus() {
+          return null
+        },
       },
     })
 
@@ -327,6 +330,9 @@ describe('ExecutionService', () => {
         },
         async cancelOrder() {
           return buildExecutionLog('cancelled')
+        },
+        async getOrderStatus() {
+          return null
         },
       },
     })
@@ -361,6 +367,9 @@ describe('ExecutionService', () => {
         async cancelOrder() {
           return buildExecutionLog('cancelled')
         },
+        async getOrderStatus() {
+          return null
+        },
       },
     })
 
@@ -375,6 +384,77 @@ describe('ExecutionService', () => {
       externalOrderId: 'venue-placed-1',
     })
     expect(result.auditTrail.at(-1)?.type).toBe('execution_pending')
+  })
+
+  it('refreshes a pending intent into executed when venue status advances', async () => {
+    const service = new ExecutionService({
+      signingAdapter: {
+        async signExecutionRequest(request) {
+          return buildSignedRequest(request)
+        },
+      },
+      executionAdapter: {
+        async placeOrder() {
+          return buildExecutionLog('accepted', {
+            orderId: 'venue-refresh-1',
+          })
+        },
+        async cancelOrder() {
+          return buildExecutionLog('cancelled')
+        },
+        async getOrderStatus(orderId) {
+          return buildExecutionLog('filled', {
+            orderId,
+            recordedAt: '2026-04-18T12:00:02.000Z',
+          })
+        },
+      },
+    })
+
+    const { intent } = service.submitIntent(validIntent, 'req-1')
+    service.confirmIntent(intent.intentId, 'req-2')
+    await service.executeIntent(intent.intentId, 'req-3')
+
+    const refreshed = await service.refreshIntent(intent.intentId, 'req-4')
+
+    expect(refreshed.executionLog?.status).toBe('filled')
+    expect(refreshed.intent.status).toBe('executed')
+    expect(refreshed.intent.orders.at(-1)).toMatchObject({
+      status: 'filled',
+      externalOrderId: 'venue-refresh-1',
+    })
+  })
+
+  it('returns the current intent when refresh has no new venue state', async () => {
+    const service = new ExecutionService({
+      signingAdapter: {
+        async signExecutionRequest(request) {
+          return buildSignedRequest(request)
+        },
+      },
+      executionAdapter: {
+        async placeOrder() {
+          return buildExecutionLog('accepted', {
+            orderId: 'venue-refresh-2',
+          })
+        },
+        async cancelOrder() {
+          return buildExecutionLog('cancelled')
+        },
+        async getOrderStatus() {
+          return null
+        },
+      },
+    })
+
+    const { intent } = service.submitIntent(validIntent, 'req-1')
+    service.confirmIntent(intent.intentId, 'req-2')
+    await service.executeIntent(intent.intentId, 'req-3')
+
+    const refreshed = await service.refreshIntent(intent.intentId, 'req-4')
+
+    expect(refreshed.executionLog).toBeUndefined()
+    expect(refreshed.intent.status).toBe('execution_pending')
   })
 
   it('keeps the intent confirmed when the venue returns a cancelled order', async () => {
@@ -392,6 +472,9 @@ describe('ExecutionService', () => {
         },
         async cancelOrder() {
           return buildExecutionLog('cancelled')
+        },
+        async getOrderStatus() {
+          return null
         },
       },
     })
@@ -428,6 +511,9 @@ describe('ExecutionService', () => {
         },
         async cancelOrder() {
           return buildExecutionLog('cancelled')
+        },
+        async getOrderStatus() {
+          return null
         },
       },
     })
@@ -525,6 +611,9 @@ describe('ExecutionService', () => {
         },
         async cancelOrder() {
           return buildExecutionLog('cancelled')
+        },
+        async getOrderStatus() {
+          return null
         },
       },
     })

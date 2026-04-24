@@ -55,6 +55,20 @@ export class PaperExecutionAdapter implements ExecutionAdapter {
       details: {},
     })
   }
+
+  async getOrderStatus(orderId: string, requestId: string): Promise<ExecutionLogRecord | null> {
+    return ExecutionLogRecordSchema.parse({
+      logId: randomUUID(),
+      intentId: orderId,
+      venue: 'paper',
+      status: 'filled',
+      recordedAt: new Date().toISOString(),
+      orderId,
+      requestId,
+      preflightOk: true,
+      details: {},
+    })
+  }
 }
 
 export function createExecutionAdapter(options: { venue?: string } = {}): ExecutionAdapter {
@@ -160,6 +174,22 @@ export function buildOrderRecordFromExecutionLog(input: {
     updatedAt: recordedAt,
     externalOrderId: input.executionLog.orderId,
     failureReason,
+  })
+}
+
+export function updateOrderRecordFromExecutionLog(input: {
+  order: OrderRecord
+  executionLog: ExecutionLogRecord
+  recordedAt?: string
+}): OrderRecord {
+  const recordedAt = input.recordedAt ?? input.executionLog.recordedAt
+
+  return OrderRecordSchema.parse({
+    ...input.order,
+    status: mapExecutionLogToOrderStatus(input.executionLog.status),
+    updatedAt: recordedAt,
+    externalOrderId: input.executionLog.orderId ?? input.order.externalOrderId,
+    failureReason: extractFailureReason(input.executionLog),
   })
 }
 
