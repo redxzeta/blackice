@@ -67,6 +67,7 @@ execution:
     - paper
     - sandbox
   requirePreflight: false
+  preflightMaxAgeSeconds: 120
   maxPositionUsd: 2500
   signerKind: backend
   storageKind: sqlite
@@ -97,6 +98,7 @@ execution:
         defaultVenue: 'paper',
         allowedVenues: ['paper', 'sandbox'],
         requirePreflight: false,
+        preflightMaxAgeSeconds: 120,
         maxPositionUsd: 2500,
         signerKind: 'backend',
         storageKind: 'sqlite',
@@ -129,6 +131,7 @@ server:
         defaultVenue: 'paper',
         allowedVenues: ['paper'],
         requirePreflight: true,
+        preflightMaxAgeSeconds: 300,
         maxPositionUsd: 1000,
         signerKind: 'mock',
         storageKind: 'memory',

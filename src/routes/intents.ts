@@ -19,6 +19,7 @@ import {
   IntentStatusSchema,
   ExecuteIntentRequestSchema,
   ExecuteIntentResponseSchema,
+  IntentPreflightResponseSchema,
   ListCandidatesResponseSchema,
   ListCandidatesRequestSchema,
   ListIntentsResponseSchema,
@@ -101,6 +102,44 @@ export function registerIntentRoutes(
     }
   })
 
+  app.post('/v1/intents/:intentId/preflight', async (req: Request, res: Response) => {
+    const requestId = getRequestId(res)
+    const parsed = parseBodyOrRespond(PreflightRequestSchema, req.body, res)
+    if (!parsed) {
+      return
+    }
+
+    try {
+      const intent = executionService.getIntent(req.params.intentId)
+      const preflightRequest = {
+        ...parsed,
+        venue: intent.venue,
+        positionUsd: intent.notionalUsd,
+      }
+      const preflight = await preflightEvaluator.evaluate(preflightRequest)
+      const preflightRecord = executionService.recordPreflight(
+        intent.intentId,
+        preflightRequest,
+        preflight,
+        requestId
+      )
+      log.info('intent_preflight_recorded', {
+        request_id: requestId,
+        intent_id: intent.intentId,
+        venue: preflightRecord.result.venue,
+        ok: preflightRecord.result.ok,
+      })
+      res.status(200).json(
+        IntentPreflightResponseSchema.parse({
+          ok: true,
+          preflightRecord,
+        })
+      )
+    } catch (error) {
+      respondExecutionError(res, error)
+    }
+  })
+
   app.post('/v1/intents', (req: Request, res: Response) => {
     const requestId = getRequestId(res)
     const parsed = parseBodyOrRespond(SubmitIntentRequestSchema, req.body, res)
@@ -173,45 +212,26 @@ export function registerIntentRoutes(
   app.post('/v1/intents/:intentId/execute', async (req: Request, res: Response) => {
     try {
       const requestId = getRequestId(res)
-      const parsed = parseBodyOrRespond(ExecuteIntentRequestSchema, req.body ?? {}, res)
-      if (!parsed) {
+      if (!parseBodyOrRespond(ExecuteIntentRequestSchema, req.body ?? {}, res)) {
         return
       }
 
-      const intent = executionService.getIntent(req.params.intentId)
-      let preflight = undefined
-
-      if (parsed.preflight) {
-        preflight = await preflightEvaluator.evaluate({
-          ...parsed.preflight,
-          venue: intent.venue,
-          positionUsd: intent.notionalUsd,
-        })
-      }
-
-      if (requirePreflightExecution() && !preflight) {
+      const preflightRecord = requirePreflightExecution()
+        ? executionService.getExecutionPreflightRecord(req.params.intentId)
+        : null
+      if (requirePreflightExecution() && !preflightRecord) {
         res.status(422).json({
           error: 'Preflight is required before execution',
           code: 'preflight_required',
         })
         return
       }
-
-      if (preflight && !preflight.ok) {
-        res.status(422).json({
-          error: 'Preflight failed',
-          code: 'preflight_failed',
-          preflight,
-        })
-        return
-      }
-
       const executedIntent = await executionService.executeIntent(req.params.intentId, requestId)
       res.status(200).json(
         ExecuteIntentResponseSchema.parse({
           ok: true,
           intent: executedIntent,
-          preflight,
+          preflightRecord: preflightRecord ?? undefined,
         })
       )
     } catch (error) {

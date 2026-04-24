@@ -2,7 +2,7 @@ import { z } from 'zod'
 import {
   CandidateDiscoveryQuerySchema,
   EnrichedCandidateRecordSchema,
-  PreflightRequestSchema,
+  PreflightRecordSchema,
   PreflightResultSchema,
 } from './contracts.js'
 
@@ -115,16 +115,12 @@ export const IntentActionResponseSchema = z.object({
   intent: IntentRecordSchema,
 })
 
-export const ExecuteIntentRequestSchema = z
-  .object({
-    preflight: PreflightRequestSchema.optional(),
-  })
-  .default({})
+export const ExecuteIntentRequestSchema = z.object({}).default({})
 
 export const ExecuteIntentResponseSchema = z.object({
   ok: z.literal(true),
   intent: IntentRecordSchema,
-  preflight: PreflightResultSchema.optional(),
+  preflightRecord: PreflightRecordSchema.optional(),
 })
 
 export const ListIntentsResponseSchema = z.object({
@@ -142,6 +138,11 @@ export const ListCandidatesResponseSchema = z.object({
 export const PreflightActionResponseSchema = z.object({
   ok: z.literal(true),
   preflight: PreflightResultSchema,
+})
+
+export const IntentPreflightResponseSchema = z.object({
+  ok: z.literal(true),
+  preflightRecord: PreflightRecordSchema,
 })
 
 export type SubmitIntentRequest = z.input<typeof SubmitIntentRequestSchema>

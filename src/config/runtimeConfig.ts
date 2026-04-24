@@ -34,6 +34,7 @@ const DEFAULT_MARKET_DATA_MAX_SPREAD_BPS = 500
 const DEFAULT_EXECUTION_DEFAULT_VENUE = 'paper'
 const DEFAULT_EXECUTION_MAX_POSITION_USD = 1_000
 const DEFAULT_EXECUTION_REQUIRE_PREFLIGHT = true
+const DEFAULT_EXECUTION_PREFLIGHT_MAX_AGE_SECONDS = 300
 const DEFAULT_EXECUTION_SIGNER_KIND = 'mock'
 const DEFAULT_EXECUTION_STORAGE_KIND = 'memory'
 const DEFAULT_EXECUTION_STORAGE_PATH = ''
@@ -105,6 +106,7 @@ const YamlConfigSchema = z
         defaultVenue: z.string().trim().min(1).optional(),
         allowedVenues: z.array(z.string().trim().min(1)).optional(),
         requirePreflight: z.boolean().optional(),
+        preflightMaxAgeSeconds: z.number().int().positive().optional(),
         maxPositionUsd: z.number().positive().optional(),
         signerKind: z.string().trim().min(1).optional(),
         storageKind: z.string().trim().min(1).optional(),
@@ -172,6 +174,7 @@ const RuntimeConfigSchema = z
       defaultVenue: z.string().min(1),
       allowedVenues: z.array(z.string().min(1)).min(1),
       requirePreflight: z.boolean(),
+      preflightMaxAgeSeconds: z.number().int().positive(),
       maxPositionUsd: z.number().positive(),
       signerKind: z.string().min(1),
       storageKind: z.string().min(1),
@@ -302,6 +305,8 @@ export function getRuntimeConfig(): RuntimeConfig {
       defaultVenue,
     ],
     requirePreflight: executionYaml.requirePreflight ?? DEFAULT_EXECUTION_REQUIRE_PREFLIGHT,
+    preflightMaxAgeSeconds:
+      executionYaml.preflightMaxAgeSeconds ?? DEFAULT_EXECUTION_PREFLIGHT_MAX_AGE_SECONDS,
     maxPositionUsd: executionYaml.maxPositionUsd ?? DEFAULT_EXECUTION_MAX_POSITION_USD,
     signerKind: String(executionYaml.signerKind ?? DEFAULT_EXECUTION_SIGNER_KIND).trim(),
     storageKind: String(executionYaml.storageKind ?? DEFAULT_EXECUTION_STORAGE_KIND).trim(),
