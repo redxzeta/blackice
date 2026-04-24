@@ -154,6 +154,52 @@ describe('ExecutionService', () => {
     expect(service.getIntent(intent.intentId).auditTrail.at(-1)?.type).toBe('preflight_recorded')
   })
 
+  it('returns the latest successful preflight record for execution gating', () => {
+    const { service } = buildService()
+    const { intent } = service.submitIntent(validIntent, 'req-1')
+    const record = service.recordPreflight(
+      intent.intentId,
+      buildPreflightRequest(),
+      buildPreflightResult(),
+      'req-2'
+    )
+
+    expect(service.getExecutionPreflightRecord(intent.intentId)?.preflightId).toBe(
+      record.preflightId
+    )
+  })
+
+  it('rejects execute-time use of failed or stale preflight records', () => {
+    const { service, advanceTime } = buildService()
+    const { intent } = service.submitIntent(validIntent, 'req-1')
+
+    service.recordPreflight(
+      intent.intentId,
+      buildPreflightRequest(),
+      buildPreflightResult({ ok: false }),
+      'req-2'
+    )
+    expect(() => service.getExecutionPreflightRecord(intent.intentId)).toThrowError(
+      ExecutionPolicyError
+    )
+
+    const { intent: secondIntent } = service.submitIntent(
+      { ...validIntent, idempotencyKey: 'idem-2', market: 'ETH-USD' },
+      'req-3'
+    )
+    service.recordPreflight(
+      secondIntent.intentId,
+      buildPreflightRequest(),
+      buildPreflightResult(),
+      'req-4'
+    )
+    advanceTime(301_000)
+
+    expect(() => service.getExecutionPreflightRecord(secondIntent.intentId)).toThrowError(
+      ExecutionPolicyError
+    )
+  })
+
   it('rejects preflight records whose venue or position do not match the intent', () => {
     const { service } = buildService()
 

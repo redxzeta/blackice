@@ -317,20 +317,19 @@ describe('integration routes', () => {
     const intentId = submit.body.intent.intentId
 
     const confirm = await request(app).post(`/v1/intents/${intentId}/confirm`).send({})
-    const execute = await request(app)
-      .post(`/v1/intents/${intentId}/execute`)
-      .send({
-        preflight: {
-          candidate: buildEnrichedCandidate(),
-        },
-      })
+    const preflight = await request(app).post(`/v1/intents/${intentId}/preflight`).send({
+      candidate: buildEnrichedCandidate(),
+    })
+    const execute = await request(app).post(`/v1/intents/${intentId}/execute`).send({})
 
     expect(confirm.status).toBe(200)
     expect(confirm.body.intent.status).toBe('confirmed')
+    expect(preflight.status).toBe(200)
+    expect(preflight.body.preflightRecord.result.ok).toBe(true)
     expect(execute.status).toBe(200)
     expect(execute.body.intent.status).toBe('executed')
     expect(execute.body.intent.orders).toHaveLength(1)
-    expect(execute.body.preflight.ok).toBe(true)
+    expect(execute.body.preflightRecord.result.ok).toBe(true)
   })
 
   it('POST /v1/intents rejects disallowed venues', async () => {
@@ -401,11 +400,11 @@ describe('integration routes', () => {
     expect(res.body.preflight.venue).toBe('paper')
   })
 
-  it('POST /v1/intents/:intentId/execute blocks execution when preflight is missing or failed', async () => {
+  it('POST /v1/intents/:intentId/preflight records a persisted preflight for the intent', async () => {
     const { createApp } = await import('./app.js')
     const app = createApp(1, {
       preflightEvaluator: {
-        evaluate: vi.fn().mockResolvedValue(buildPreflightResult(false)),
+        evaluate: vi.fn().mockResolvedValue(buildPreflightResult(true)),
       },
     })
 
@@ -421,22 +420,55 @@ describe('integration routes', () => {
     })
     const intentId = submit.body.intent.intentId
 
+    const preflight = await request(app).post(`/v1/intents/${intentId}/preflight`).send({
+      candidate: buildEnrichedCandidate(),
+      venue: 'kraken',
+      positionUsd: 1,
+    })
+
+    expect(preflight.status).toBe(200)
+    expect(preflight.body.preflightRecord.intentId).toBe(intentId)
+    expect(preflight.body.preflightRecord.request.venue).toBe('paper')
+    expect(preflight.body.preflightRecord.request.positionUsd).toBe(250)
+    expect(preflight.body.preflightRecord.result.ok).toBe(true)
+  })
+
+  it('POST /v1/intents/:intentId/execute blocks execution when persisted preflight is missing or failed', async () => {
+    const { createApp } = await import('./app.js')
+    const app = createApp(1, {
+      preflightEvaluator: {
+        evaluate: vi.fn().mockResolvedValue(buildPreflightResult(false)),
+      },
+    })
+
+    const submit = await request(app).post('/v1/intents').send({
+      idempotencyKey: 'idem-http-6',
+      accountId: 'acct-primary',
+      market: 'DOGE-USD',
+      venue: 'paper',
+      side: 'buy',
+      quantity: 5,
+      notionalUsd: 250,
+      ttlSeconds: 300,
+    })
+    const intentId = submit.body.intent.intentId
+
     await request(app).post(`/v1/intents/${intentId}/confirm`).send({})
 
     const missingPreflight = await request(app).post(`/v1/intents/${intentId}/execute`).send({})
-    const failedPreflight = await request(app)
+    const failedPreflight = await request(app).post(`/v1/intents/${intentId}/preflight`).send({
+      candidate: buildEnrichedCandidate(),
+    })
+    const executeAfterFailedPreflight = await request(app)
       .post(`/v1/intents/${intentId}/execute`)
-      .send({
-        preflight: {
-          candidate: buildEnrichedCandidate(),
-        },
-      })
+      .send({})
 
     expect(missingPreflight.status).toBe(422)
     expect(missingPreflight.body.code).toBe('preflight_required')
-    expect(failedPreflight.status).toBe(422)
-    expect(failedPreflight.body.code).toBe('preflight_failed')
-    expect(failedPreflight.body.preflight.ok).toBe(false)
+    expect(failedPreflight.status).toBe(200)
+    expect(failedPreflight.body.preflightRecord.result.ok).toBe(false)
+    expect(executeAfterFailedPreflight.status).toBe(422)
+    expect(executeAfterFailedPreflight.body.code).toBe('preflight_failed')
   })
 
   it('POST /analyze/logs returns validation error for bad payload', async () => {

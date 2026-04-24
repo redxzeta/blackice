@@ -16,7 +16,7 @@ import {
   mapExecutionLogToAuditEventType,
   mapExecutionLogToIntentStatus,
 } from './executionAdapter.js'
-import { buildPreflightRecord } from './preflight.js'
+import { buildPreflightRecord, computePreflightPolicyFingerprint } from './preflight.js'
 import { createExecutionRepository } from './repository.js'
 import { createSigningAdapter } from './signing.js'
 import {
@@ -117,6 +117,47 @@ export class ExecutionService {
   getLatestPreflightRecord(intentId: string): PreflightRecord | null {
     this.getIntent(intentId)
     return this.repository.getLatestPreflightRecord(intentId)
+  }
+
+  getExecutionPreflightRecord(intentId: string): PreflightRecord | null {
+    const intent = this.getIntent(intentId)
+    const record = this.repository.getLatestPreflightRecord(intentId)
+    if (!record) {
+      return null
+    }
+
+    const normalizedRequest = this.normalizePreflightRequest(intent, record.request)
+    if (!record.result.ok) {
+      throw new ExecutionPolicyError(
+        `Latest preflight for intent ${intentId} did not pass`,
+        'preflight_failed'
+      )
+    }
+
+    if (record.result.venue !== normalizedRequest.venue) {
+      throw new ExecutionPolicyError(
+        `Latest preflight for intent ${intentId} does not match the current venue`,
+        'preflight_mismatch'
+      )
+    }
+
+    const expectedFingerprint = computePreflightPolicyFingerprint(normalizedRequest)
+    if (record.policyFingerprint !== expectedFingerprint) {
+      throw new ExecutionPolicyError(
+        `Latest preflight for intent ${intentId} no longer matches current policy`,
+        'preflight_stale'
+      )
+    }
+
+    const maxAgeMs = getRuntimeConfig().execution.preflightMaxAgeSeconds * 1000
+    if (Date.parse(record.recordedAt) + maxAgeMs < this.now().getTime()) {
+      throw new ExecutionPolicyError(
+        `Latest preflight for intent ${intentId} is stale`,
+        'preflight_stale'
+      )
+    }
+
+    return record
   }
 
   recordPreflight(
