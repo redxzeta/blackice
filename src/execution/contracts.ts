@@ -143,6 +143,7 @@ export type SigningAdapter = {
 export type ExecutionAdapter = {
   placeOrder(request: SignedExecutionRequest): Promise<ExecutionLogRecord>
   cancelOrder(orderId: string, requestId: string): Promise<ExecutionLogRecord>
+  getOrderStatus(orderId: string, requestId: string): Promise<ExecutionLogRecord | null>
 }
 
 export type ExecutionRepository = {
@@ -155,5 +156,6 @@ export type ExecutionRepository = {
   listPreflightRecords(intentId: string): PreflightRecord[]
   getLatestPreflightRecord(intentId: string): PreflightRecord | null
   appendPreflightRecord(record: PreflightRecord): void
+  listExecutionLogs(intentId: string): ExecutionLogRecord[]
   appendExecutionLog(record: ExecutionLogRecord): void
 }

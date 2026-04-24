@@ -113,6 +113,12 @@ export class InMemoryExecutionRepository implements ExecutionRepository {
     this.state.preflightRecords.push(PreflightRecordSchema.parse(structuredClone(record)))
   }
 
+  listExecutionLogs(intentId: string): ExecutionLogRecord[] {
+    return this.state.executionLogs
+      .filter((record) => record.intentId === intentId)
+      .map((record) => structuredClone(record))
+  }
+
   appendExecutionLog(record: ExecutionLogRecord): void {
     this.state.executionLogs.push(structuredClone(record))
   }
@@ -179,6 +185,12 @@ export class FileExecutionRepository implements ExecutionRepository {
     const state = this.readState()
     state.preflightRecords.push(PreflightRecordSchema.parse(structuredClone(record)))
     this.writeState(state)
+  }
+
+  listExecutionLogs(intentId: string): ExecutionLogRecord[] {
+    return this.readState()
+      .executionLogs.filter((record) => record.intentId === intentId)
+      .map((record) => structuredClone(record))
   }
 
   appendExecutionLog(record: ExecutionLogRecord): void {

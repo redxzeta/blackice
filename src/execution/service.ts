@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { getRuntimeConfig } from '../config/runtimeConfig.js'
 import type {
   ExecutionAdapter,
+  ExecutionLogRecord,
   ExecutionRepository,
   PreflightRecord,
   PreflightRequest,
@@ -15,6 +16,8 @@ import {
   createExecutionAdapter,
   mapExecutionLogToAuditEventType,
   mapExecutionLogToIntentStatus,
+  mapExecutionLogToOrderStatus,
+  updateOrderRecordFromExecutionLog,
 } from './executionAdapter.js'
 import { buildPreflightRecord, computePreflightPolicyFingerprint } from './preflight.js'
 import { createExecutionRepository } from './repository.js'
@@ -314,34 +317,7 @@ export class ExecutionService {
 
     try {
       const executionLog = await this.executionAdapter.placeOrder(signedRequest)
-      this.repository.appendExecutionLog(executionLog)
-
-      const nowIso = executionLog.recordedAt
-      const order = buildOrderRecordFromExecutionLog({
-        intent,
-        executionLog,
-        recordedAt: nowIso,
-      })
-
-      intent.orders.push(order)
-      intent.status = mapExecutionLogToIntentStatus(executionLog.status)
-      intent.updatedAt = nowIso
-
-      if (intent.status === 'executed') {
-        intent.executedAt = nowIso
-      }
-
-      this.repository.saveIntent(intent)
-      this.appendAuditEvent(
-        intent,
-        mapExecutionLogToAuditEventType(executionLog.status),
-        requestId,
-        {
-          externalOrderId: executionLog.orderId,
-          executionStatus: executionLog.status,
-          logId: executionLog.logId,
-        }
-      )
+      this.applyExecutionLog(intent, executionLog, requestId, 'append')
       return intent
     } catch (error) {
       const nowIso = this.now().toISOString()
@@ -353,6 +329,42 @@ export class ExecutionService {
       })
       throw error
     }
+  }
+
+  async refreshIntent(
+    intentId: string,
+    requestId: string
+  ): Promise<{ intent: IntentRecord; executionLog?: ExecutionLogRecord }> {
+    const intent = this.getIntent(intentId)
+    if (intent.status !== 'execution_pending') {
+      return { intent }
+    }
+
+    const latestOrder = intent.orders.at(-1)
+    if (!latestOrder?.externalOrderId) {
+      return { intent }
+    }
+
+    const executionLog = await this.executionAdapter.getOrderStatus(
+      latestOrder.externalOrderId,
+      requestId
+    )
+    if (!executionLog) {
+      return { intent }
+    }
+
+    const normalizedExecutionLog: ExecutionLogRecord = {
+      ...executionLog,
+      intentId: intent.intentId,
+      venue: intent.venue,
+    }
+
+    if (mapExecutionLogToOrderStatus(normalizedExecutionLog.status) === latestOrder.status) {
+      return { intent }
+    }
+
+    this.applyExecutionLog(intent, normalizedExecutionLog, requestId, 'refresh')
+    return { intent, executionLog: normalizedExecutionLog }
   }
 
   cancelIntent(intentId: string, requestId: string): IntentRecord {
@@ -466,5 +478,44 @@ export class ExecutionService {
       venue,
       positionUsd,
     }
+  }
+
+  private applyExecutionLog(
+    intent: IntentRecord,
+    executionLog: ExecutionLogRecord,
+    requestId: string,
+    mode: 'append' | 'refresh'
+  ): void {
+    this.repository.appendExecutionLog(executionLog)
+
+    const nowIso = executionLog.recordedAt
+    if (mode === 'append') {
+      intent.orders.push(
+        buildOrderRecordFromExecutionLog({
+          intent,
+          executionLog,
+          recordedAt: nowIso,
+        })
+      )
+    } else if (intent.orders.length > 0) {
+      intent.orders[intent.orders.length - 1] = updateOrderRecordFromExecutionLog({
+        order: intent.orders[intent.orders.length - 1],
+        executionLog,
+        recordedAt: nowIso,
+      })
+    }
+
+    intent.status = mapExecutionLogToIntentStatus(executionLog.status)
+    intent.updatedAt = nowIso
+    if (intent.status === 'executed') {
+      intent.executedAt = nowIso
+    }
+
+    this.repository.saveIntent(intent)
+    this.appendAuditEvent(intent, mapExecutionLogToAuditEventType(executionLog.status), requestId, {
+      externalOrderId: executionLog.orderId,
+      executionStatus: executionLog.status,
+      logId: executionLog.logId,
+    })
   }
 }

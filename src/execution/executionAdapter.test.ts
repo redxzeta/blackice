@@ -6,6 +6,7 @@ import {
   mapExecutionLogToIntentStatus,
   mapExecutionLogToOrderStatus,
   PaperExecutionAdapter,
+  updateOrderRecordFromExecutionLog,
 } from './executionAdapter.js'
 import type { ExecutionLogRecord } from './contracts.js'
 import type { IntentRecord } from './schema.js'
@@ -122,5 +123,44 @@ describe('executionAdapter', () => {
     expect(placed.orderId).toBe('paper-req-4')
     expect(cancelled.status).toBe('cancelled')
     expect(cancelled.orderId).toBe('venue-order-2')
+    await expect(adapter.getOrderStatus('venue-order-3', 'req-6')).resolves.toMatchObject({
+      status: 'filled',
+      orderId: 'venue-order-3',
+    })
+  })
+
+  it('updates existing order records from refreshed execution logs', () => {
+    const order = buildOrderRecordFromExecutionLog({
+      intent: baseIntent,
+      executionLog: {
+        logId: 'log-pending',
+        intentId: baseIntent.intentId,
+        venue: baseIntent.venue,
+        status: 'accepted',
+        recordedAt: '2026-04-22T00:01:00.000Z',
+        orderId: 'venue-order-4',
+        requestId: 'req-7',
+        preflightOk: true,
+        details: {},
+      },
+    })
+
+    const refreshed = updateOrderRecordFromExecutionLog({
+      order,
+      executionLog: {
+        logId: 'log-filled',
+        intentId: baseIntent.intentId,
+        venue: baseIntent.venue,
+        status: 'filled',
+        recordedAt: '2026-04-22T00:02:00.000Z',
+        orderId: 'venue-order-4',
+        requestId: 'req-8',
+        preflightOk: true,
+        details: {},
+      },
+    })
+
+    expect(refreshed.status).toBe('filled')
+    expect(refreshed.updatedAt).toBe('2026-04-22T00:02:00.000Z')
   })
 })

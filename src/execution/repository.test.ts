@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { IntentRecord } from './schema.js'
-import type { PreflightRecord } from './contracts.js'
+import type { ExecutionLogRecord, PreflightRecord } from './contracts.js'
 import { FileExecutionRepository, InMemoryExecutionRepository } from './repository.js'
 
 const tempDirs: string[] = []
@@ -82,6 +82,21 @@ function buildPreflightRecord(overrides: Partial<PreflightRecord> = {}): Preflig
   }
 }
 
+function buildExecutionLogRecord(overrides: Partial<ExecutionLogRecord> = {}): ExecutionLogRecord {
+  return {
+    logId: 'log-1',
+    intentId: 'intent-1',
+    venue: 'paper',
+    status: 'placed',
+    recordedAt: '2026-04-21T00:02:00.000Z',
+    orderId: 'venue-order-1',
+    requestId: 'req-1',
+    preflightOk: true,
+    details: {},
+    ...overrides,
+  }
+}
+
 afterEach(() => {
   while (tempDirs.length > 0) {
     rmSync(tempDirs.pop() as string, { recursive: true, force: true })
@@ -93,14 +108,17 @@ describe('execution repositories', () => {
     const repository = new InMemoryExecutionRepository()
     const intent = buildIntent()
     const preflightRecord = buildPreflightRecord()
+    const executionLog = buildExecutionLogRecord()
 
     repository.saveIntent(intent)
     repository.saveIdempotencyKey(intent.idempotencyKey, intent.intentId)
     repository.appendPreflightRecord(preflightRecord)
+    repository.appendExecutionLog(executionLog)
 
     expect(repository.getIntent(intent.intentId)).toMatchObject(intent)
     expect(repository.getIntentIdByIdempotencyKey(intent.idempotencyKey)).toBe(intent.intentId)
     expect(repository.getLatestPreflightRecord(intent.intentId)).toMatchObject(preflightRecord)
+    expect(repository.listExecutionLogs(intent.intentId)).toMatchObject([executionLog])
   })
 
   it('persists intents to disk across repository instances', () => {
@@ -108,10 +126,12 @@ describe('execution repositories', () => {
     const firstRepository = new FileExecutionRepository(storagePath)
     const intent = buildIntent()
     const preflightRecord = buildPreflightRecord()
+    const executionLog = buildExecutionLogRecord()
 
     firstRepository.saveIntent(intent)
     firstRepository.saveIdempotencyKey(intent.idempotencyKey, intent.intentId)
     firstRepository.appendPreflightRecord(preflightRecord)
+    firstRepository.appendExecutionLog(executionLog)
 
     const secondRepository = new FileExecutionRepository(storagePath)
     expect(secondRepository.getIntent(intent.intentId)).toMatchObject(intent)
@@ -122,9 +142,11 @@ describe('execution repositories', () => {
     expect(secondRepository.getLatestPreflightRecord(intent.intentId)).toMatchObject(
       preflightRecord
     )
+    expect(secondRepository.listExecutionLogs(intent.intentId)).toMatchObject([executionLog])
 
     const persisted = JSON.parse(readFileSync(storagePath, 'utf8'))
     expect(persisted.idempotencyKeys[intent.idempotencyKey]).toBe(intent.intentId)
     expect(persisted.preflightRecords).toHaveLength(1)
+    expect(persisted.executionLogs).toHaveLength(1)
   })
 })
