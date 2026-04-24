@@ -2,7 +2,13 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { ExecutionLogRecord, ExecutionRequest, SignedExecutionRequest } from './contracts.js'
+import type {
+  ExecutionLogRecord,
+  ExecutionRequest,
+  PreflightRequest,
+  PreflightResult,
+  SignedExecutionRequest,
+} from './contracts.js'
 import { FileExecutionRepository } from './repository.js'
 import { ExecutionPolicyError, ExecutionService, IntentStateError } from './service.js'
 
@@ -75,6 +81,48 @@ function buildExecutionLog(
   }
 }
 
+function buildPreflightRequest(overrides: Partial<PreflightRequest> = {}): PreflightRequest {
+  return {
+    candidate: {
+      marketId: 'market-1',
+      eventId: 'event-1',
+      slug: 'btc-above-100k',
+      question: 'Will BTC close above 100k?',
+      marketType: 'standard',
+      tradable: true,
+      metadataComplete: true,
+      qualificationStatus: 'eligible',
+      qualificationReasons: [],
+      orderbook: {
+        bestBid: 0.48,
+        bestAsk: 0.5,
+        spreadBps: 400,
+        depthUsd: 1200,
+        asOf: '2026-04-18T12:00:00.000Z',
+      },
+      impliedProbability: 0.49,
+      tags: [],
+    },
+    ...overrides,
+  }
+}
+
+function buildPreflightResult(overrides: Partial<PreflightResult> = {}): PreflightResult {
+  return {
+    ok: true,
+    checkedAt: '2026-04-18T12:00:00.000Z',
+    venue: 'paper',
+    checks: [
+      {
+        code: 'candidate_not_tradable',
+        ok: true,
+        message: 'Candidate is tradable',
+      },
+    ],
+    ...overrides,
+  }
+}
+
 describe('ExecutionService', () => {
   it('supports idempotent submit retries', () => {
     const { service } = buildService()
@@ -85,6 +133,58 @@ describe('ExecutionService', () => {
     expect(first.created).toBe(true)
     expect(second.created).toBe(false)
     expect(second.intent.intentId).toBe(first.intent.intentId)
+  })
+
+  it('records intent-bound preflight records and returns the latest one', () => {
+    const { service } = buildService()
+
+    const { intent } = service.submitIntent(validIntent, 'req-1')
+    const record = service.recordPreflight(
+      intent.intentId,
+      buildPreflightRequest(),
+      buildPreflightResult(),
+      'req-2'
+    )
+
+    expect(record.intentId).toBe(intent.intentId)
+    expect(record.request.venue).toBe(intent.venue)
+    expect(record.request.positionUsd).toBe(intent.notionalUsd)
+    expect(service.getLatestPreflightRecord(intent.intentId)?.preflightId).toBe(record.preflightId)
+    expect(service.listPreflightRecords(intent.intentId)).toHaveLength(1)
+    expect(service.getIntent(intent.intentId).auditTrail.at(-1)?.type).toBe('preflight_recorded')
+  })
+
+  it('rejects preflight records whose venue or position do not match the intent', () => {
+    const { service } = buildService()
+
+    const { intent } = service.submitIntent(validIntent, 'req-1')
+
+    expect(() =>
+      service.recordPreflight(
+        intent.intentId,
+        buildPreflightRequest({ venue: 'live' }),
+        buildPreflightResult(),
+        'req-2'
+      )
+    ).toThrowError(IntentStateError)
+
+    expect(() =>
+      service.recordPreflight(
+        intent.intentId,
+        buildPreflightRequest({ positionUsd: 9_999 }),
+        buildPreflightResult(),
+        'req-3'
+      )
+    ).toThrowError(IntentStateError)
+
+    expect(() =>
+      service.recordPreflight(
+        intent.intentId,
+        buildPreflightRequest(),
+        buildPreflightResult({ venue: 'live' }),
+        'req-4'
+      )
+    ).toThrowError(IntentStateError)
   })
 
   it('rejects policy violations', () => {
@@ -404,6 +504,38 @@ describe('ExecutionService', () => {
       status: 'filled',
       orderId: 'venue-filled-1',
     })
+  })
+
+  it('persists preflight records across service instances with the durable repository', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'blackice-preflight-records-'))
+    tempDirs.push(dir)
+    const storagePath = path.join(dir, 'execution-state.json')
+
+    const firstRepository = new FileExecutionRepository(storagePath)
+    const firstService = new ExecutionService({
+      repository: firstRepository,
+      now: () => new Date('2026-04-18T12:00:00.000Z'),
+    })
+    const { intent } = firstService.submitIntent(validIntent, 'req-1')
+    const recorded = firstService.recordPreflight(
+      intent.intentId,
+      buildPreflightRequest(),
+      buildPreflightResult(),
+      'req-2'
+    )
+
+    const secondRepository = new FileExecutionRepository(storagePath)
+    const secondService = new ExecutionService({
+      repository: secondRepository,
+      now: () => new Date('2026-04-18T12:00:01.000Z'),
+    })
+
+    expect(secondService.getLatestPreflightRecord(intent.intentId)).toMatchObject({
+      preflightId: recorded.preflightId,
+      intentId: intent.intentId,
+      policyFingerprint: recorded.policyFingerprint,
+    })
+    expect(JSON.parse(readFileSync(storagePath, 'utf8')).preflightRecords).toHaveLength(1)
   })
 
   it('reloads intents from a durable repository across service instances', () => {

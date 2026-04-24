@@ -3,6 +3,7 @@ import {
   CandidateRecordSchema,
   EnrichedCandidateRecordSchema,
   ExecutionLogRecordSchema,
+  PreflightRecordSchema,
   PreflightRequestSchema,
   ExecutionRequestSchema,
   PreflightResultSchema,
@@ -90,10 +91,19 @@ describe('execution foundation contracts', () => {
       },
       positionUsd: 250,
     })
+    const preflightRecord = PreflightRecordSchema.parse({
+      preflightId: 'preflight-1',
+      intentId: 'intent-1',
+      recordedAt: '2026-04-19T12:00:01.000Z',
+      policyFingerprint: 'fingerprint-1',
+      request: preflightRequest,
+      result: preflight,
+    })
 
     expect(signedRequest.signature).toBe('signed-payload')
     expect(preflight.checks[0]?.code).toBe('spread_above_limit')
     expect(preflightRequest.positionUsd).toBe(250)
+    expect(preflightRecord.policyFingerprint).toBe('fingerprint-1')
   })
 
   it('parses execution log records and rejects invalid candidate data', () => {

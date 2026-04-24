@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { EnrichedCandidateRecord, SigningAdapter } from './contracts.js'
+import type { EnrichedCandidateRecord, PreflightRequest, SigningAdapter } from './contracts.js'
 
 const tempDirs: string[] = []
 
@@ -34,6 +34,15 @@ function buildCandidate(overrides: Partial<EnrichedCandidateRecord> = {}): Enric
       asOf: '2026-04-23T01:00:00.000Z',
     },
     impliedProbability: 0.48,
+    ...overrides,
+  }
+}
+
+function buildPreflightRequest(overrides: Partial<PreflightRequest> = {}): PreflightRequest {
+  return {
+    candidate: buildCandidate(),
+    venue: 'paper',
+    positionUsd: 250,
     ...overrides,
   }
 }
@@ -205,5 +214,47 @@ execution:
     expect(result.checks.find((check) => check.code === 'signing_unavailable')?.message).toContain(
       'Unsupported execution.signerKind: remote-kms'
     )
+  })
+
+  it('computes stable policy fingerprints and changes them when config changes', async () => {
+    const firstConfigFile = writeConfig(`version: 1
+marketData:
+  minDepthUsd: 1000
+  maxSpreadBps: 500
+execution:
+  defaultVenue: paper
+  allowedVenues:
+    - paper
+  maxPositionUsd: 1000
+  signerKind: mock
+`)
+
+    vi.stubEnv('BLACKICE_CONFIG_FILE', firstConfigFile)
+    const { computePreflightPolicyFingerprint } = await import('./preflight.js')
+    const firstFingerprint = computePreflightPolicyFingerprint(buildPreflightRequest())
+    const secondFingerprint = computePreflightPolicyFingerprint(buildPreflightRequest())
+
+    expect(firstFingerprint).toBe(secondFingerprint)
+
+    vi.resetModules()
+    const secondConfigFile = writeConfig(`version: 1
+marketData:
+  minDepthUsd: 1500
+  maxSpreadBps: 500
+execution:
+  defaultVenue: paper
+  allowedVenues:
+    - paper
+  maxPositionUsd: 1000
+  signerKind: mock
+`)
+    vi.stubEnv('BLACKICE_CONFIG_FILE', secondConfigFile)
+
+    const { computePreflightPolicyFingerprint: computeWithChangedConfig } = await import(
+      './preflight.js'
+    )
+    const changedFingerprint = computeWithChangedConfig(buildPreflightRequest())
+
+    expect(changedFingerprint).not.toBe(firstFingerprint)
   })
 })

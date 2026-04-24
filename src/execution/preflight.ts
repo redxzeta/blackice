@@ -1,11 +1,13 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { getRuntimeConfig } from '../config/runtimeConfig.js'
 import {
+  PreflightRecordSchema,
   PreflightResultSchema,
   PreflightRequestSchema,
   type PreflightCheckCode,
   type PreflightCheckResult,
   type PreflightEvaluator,
+  type PreflightRecord,
   type PreflightRequest,
   type PreflightResult,
   type SigningAdapter,
@@ -46,6 +48,50 @@ export class CandidatePreflightEngine implements PreflightEvaluator {
       checks,
     })
   }
+}
+
+export function buildPreflightRecord(input: {
+  intentId: string
+  recordedAt: string
+  request: PreflightRequest
+  result: PreflightResult
+}): PreflightRecord {
+  const normalizedRequest = PreflightRequestSchema.parse(input.request)
+  const normalizedResult = PreflightResultSchema.parse(input.result)
+
+  return PreflightRecordSchema.parse({
+    preflightId: randomUUID(),
+    intentId: input.intentId,
+    recordedAt: input.recordedAt,
+    policyFingerprint: computePreflightPolicyFingerprint(normalizedRequest),
+    request: normalizedRequest,
+    result: normalizedResult,
+  })
+}
+
+export function computePreflightPolicyFingerprint(request: PreflightRequest): string {
+  const normalizedRequest = PreflightRequestSchema.parse(request)
+  const runtimeConfig = getRuntimeConfig()
+
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        version: 1,
+        request: normalizedRequest,
+        marketData: {
+          minDepthUsd: runtimeConfig.marketData.minDepthUsd,
+          maxSpreadBps: runtimeConfig.marketData.maxSpreadBps,
+        },
+        execution: {
+          defaultVenue: runtimeConfig.execution.defaultVenue,
+          allowedVenues: runtimeConfig.execution.allowedVenues,
+          requirePreflight: runtimeConfig.execution.requirePreflight,
+          maxPositionUsd: runtimeConfig.execution.maxPositionUsd,
+          signerKind: runtimeConfig.execution.signerKind,
+        },
+      })
+    )
+    .digest('hex')
 }
 
 async function buildChecks(input: {
