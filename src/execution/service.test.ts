@@ -154,6 +154,41 @@ describe('ExecutionService', () => {
     expect(service.getIntent(intent.intentId).auditTrail.at(-1)?.type).toBe('preflight_recorded')
   })
 
+  it('lists persisted execution logs for an intent', async () => {
+    const service = new ExecutionService({
+      signingAdapter: {
+        async signExecutionRequest(request) {
+          return buildSignedRequest(request)
+        },
+      },
+      executionAdapter: {
+        async placeOrder() {
+          return buildExecutionLog('filled', {
+            orderId: 'venue-log-1',
+          })
+        },
+        async cancelOrder() {
+          return buildExecutionLog('cancelled')
+        },
+        async getOrderStatus() {
+          return null
+        },
+      },
+    })
+
+    const { intent } = service.submitIntent(validIntent, 'req-1')
+    service.confirmIntent(intent.intentId, 'req-2')
+    await service.executeIntent(intent.intentId, 'req-3')
+
+    expect(service.listExecutionLogs(intent.intentId)).toMatchObject([
+      {
+        intentId: intent.intentId,
+        status: 'filled',
+        orderId: 'venue-log-1',
+      },
+    ])
+  })
+
   it('returns the latest successful preflight record for execution gating', () => {
     const { service } = buildService()
     const { intent } = service.submitIntent(validIntent, 'req-1')

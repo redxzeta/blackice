@@ -130,6 +130,16 @@ export const IntentRefreshResponseSchema = z.object({
   executionLog: ExecutionLogRecordSchema.optional(),
 })
 
+export const IntentPreflightHistoryResponseSchema = z.object({
+  ok: z.literal(true),
+  preflightRecords: z.array(PreflightRecordSchema),
+})
+
+export const IntentExecutionLogsResponseSchema = z.object({
+  ok: z.literal(true),
+  executionLogs: z.array(ExecutionLogRecordSchema),
+})
+
 export const ListIntentsResponseSchema = z.object({
   ok: z.literal(true),
   intents: z.array(IntentRecordSchema),

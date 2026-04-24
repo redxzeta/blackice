@@ -20,7 +20,9 @@ import {
   ExecuteIntentRequestSchema,
   ExecuteIntentResponseSchema,
   IntentRefreshResponseSchema,
+  IntentExecutionLogsResponseSchema,
   IntentPreflightResponseSchema,
+  IntentPreflightHistoryResponseSchema,
   ListCandidatesResponseSchema,
   ListCandidatesRequestSchema,
   ListIntentsResponseSchema,
@@ -193,6 +195,32 @@ export function registerIntentRoutes(
         IntentActionResponseSchema.parse({
           ok: true,
           intent: executionService.getIntent(req.params.intentId),
+        })
+      )
+    } catch (error) {
+      respondExecutionError(res, error)
+    }
+  })
+
+  app.get('/v1/intents/:intentId/preflights', (req: Request, res: Response) => {
+    try {
+      res.status(200).json(
+        IntentPreflightHistoryResponseSchema.parse({
+          ok: true,
+          preflightRecords: executionService.listPreflightRecords(req.params.intentId),
+        })
+      )
+    } catch (error) {
+      respondExecutionError(res, error)
+    }
+  })
+
+  app.get('/v1/intents/:intentId/execution-logs', (req: Request, res: Response) => {
+    try {
+      res.status(200).json(
+        IntentExecutionLogsResponseSchema.parse({
+          ok: true,
+          executionLogs: executionService.listExecutionLogs(req.params.intentId),
         })
       )
     } catch (error) {
