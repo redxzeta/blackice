@@ -1,18 +1,25 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import type { ExecutionLogRecord, ExecutionRepository } from './contracts.js'
+import {
+  PreflightRecordSchema,
+  type ExecutionLogRecord,
+  type ExecutionRepository,
+  type PreflightRecord,
+} from './contracts.js'
 import type { IntentRecord, IntentStatus } from './schema.js'
 import { AuditEventSchema, IntentRecordSchema } from './schema.js'
 
 type StoredExecutionState = {
   intents: Record<string, IntentRecord>
   idempotencyKeys: Record<string, string>
+  preflightRecords: PreflightRecord[]
   executionLogs: ExecutionLogRecord[]
 }
 
 const EMPTY_STATE: StoredExecutionState = {
   intents: {},
   idempotencyKeys: {},
+  preflightRecords: [],
   executionLogs: [],
 }
 
@@ -26,6 +33,7 @@ function cloneState(state: StoredExecutionState): StoredExecutionState {
       Object.entries(state.intents).map(([intentId, intent]) => [intentId, cloneIntent(intent)])
     ),
     idempotencyKeys: { ...state.idempotencyKeys },
+    preflightRecords: structuredClone(state.preflightRecords),
     executionLogs: structuredClone(state.executionLogs),
   }
 }
@@ -42,6 +50,9 @@ function parseState(raw: string): StoredExecutionState {
   return {
     intents,
     idempotencyKeys: { ...(parsed.idempotencyKeys ?? {}) },
+    preflightRecords: (parsed.preflightRecords ?? []).map((record) =>
+      PreflightRecordSchema.parse(record)
+    ),
     executionLogs: structuredClone(parsed.executionLogs ?? []),
   }
 }
@@ -85,6 +96,21 @@ export class InMemoryExecutionRepository implements ExecutionRepository {
     const nextIntent = cloneIntent(intent)
     nextIntent.auditTrail.push(parsedEvent)
     this.state.intents[parsedEvent.intentId] = nextIntent
+  }
+
+  listPreflightRecords(intentId: string): PreflightRecord[] {
+    return this.state.preflightRecords
+      .filter((record) => record.intentId === intentId)
+      .map((record) => PreflightRecordSchema.parse(structuredClone(record)))
+  }
+
+  getLatestPreflightRecord(intentId: string): PreflightRecord | null {
+    const records = this.listPreflightRecords(intentId)
+    return records.at(-1) ?? null
+  }
+
+  appendPreflightRecord(record: PreflightRecord): void {
+    this.state.preflightRecords.push(PreflightRecordSchema.parse(structuredClone(record)))
   }
 
   appendExecutionLog(record: ExecutionLogRecord): void {
@@ -135,6 +161,23 @@ export class FileExecutionRepository implements ExecutionRepository {
     const nextIntent = cloneIntent(intent)
     nextIntent.auditTrail.push(parsedEvent)
     state.intents[parsedEvent.intentId] = nextIntent
+    this.writeState(state)
+  }
+
+  listPreflightRecords(intentId: string): PreflightRecord[] {
+    return this.readState()
+      .preflightRecords.filter((record) => record.intentId === intentId)
+      .map((record) => PreflightRecordSchema.parse(structuredClone(record)))
+  }
+
+  getLatestPreflightRecord(intentId: string): PreflightRecord | null {
+    const records = this.listPreflightRecords(intentId)
+    return records.at(-1) ?? null
+  }
+
+  appendPreflightRecord(record: PreflightRecord): void {
+    const state = this.readState()
+    state.preflightRecords.push(PreflightRecordSchema.parse(structuredClone(record)))
     this.writeState(state)
   }
 

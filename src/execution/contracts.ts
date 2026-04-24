@@ -68,6 +68,15 @@ export const PreflightRequestSchema = z.object({
   positionUsd: z.number().nonnegative().optional(),
 })
 
+export const PreflightRecordSchema = z.object({
+  preflightId: z.string().min(1),
+  intentId: z.string().min(1),
+  recordedAt: z.string().datetime(),
+  policyFingerprint: z.string().min(1),
+  request: PreflightRequestSchema,
+  result: PreflightResultSchema,
+})
+
 export const ExecutionRequestSchema = z.object({
   requestId: z.string().min(1),
   intentId: z.string().min(1),
@@ -105,6 +114,7 @@ export type PreflightCheckCode = z.infer<typeof PreflightCheckCodeSchema>
 export type PreflightCheckResult = z.infer<typeof PreflightCheckResultSchema>
 export type PreflightResult = z.infer<typeof PreflightResultSchema>
 export type PreflightRequest = z.infer<typeof PreflightRequestSchema>
+export type PreflightRecord = z.infer<typeof PreflightRecordSchema>
 export type ExecutionRequest = z.infer<typeof ExecutionRequestSchema>
 export type SignedExecutionRequest = z.infer<typeof SignedExecutionRequestSchema>
 export type ExecutionLogRecord = z.infer<typeof ExecutionLogRecordSchema>
@@ -142,5 +152,8 @@ export type ExecutionRepository = {
   getIntentIdByIdempotencyKey(idempotencyKey: string): string | null
   saveIdempotencyKey(idempotencyKey: string, intentId: string): void
   appendAuditEvent(event: AuditEvent): void
+  listPreflightRecords(intentId: string): PreflightRecord[]
+  getLatestPreflightRecord(intentId: string): PreflightRecord | null
+  appendPreflightRecord(record: PreflightRecord): void
   appendExecutionLog(record: ExecutionLogRecord): void
 }

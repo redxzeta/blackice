@@ -3,6 +3,9 @@ import { getRuntimeConfig } from '../config/runtimeConfig.js'
 import type {
   ExecutionAdapter,
   ExecutionRepository,
+  PreflightRecord,
+  PreflightRequest,
+  PreflightResult,
   SignedExecutionRequest,
   SigningAdapter,
 } from './contracts.js'
@@ -13,6 +16,7 @@ import {
   mapExecutionLogToAuditEventType,
   mapExecutionLogToIntentStatus,
 } from './executionAdapter.js'
+import { buildPreflightRecord } from './preflight.js'
 import { createExecutionRepository } from './repository.js'
 import { createSigningAdapter } from './signing.js'
 import {
@@ -103,6 +107,45 @@ export class ExecutionService {
       throw new IntentNotFoundError(intentId)
     }
     return intent
+  }
+
+  listPreflightRecords(intentId: string): PreflightRecord[] {
+    this.getIntent(intentId)
+    return this.repository.listPreflightRecords(intentId)
+  }
+
+  getLatestPreflightRecord(intentId: string): PreflightRecord | null {
+    this.getIntent(intentId)
+    return this.repository.getLatestPreflightRecord(intentId)
+  }
+
+  recordPreflight(
+    intentId: string,
+    request: PreflightRequest,
+    result: PreflightResult,
+    requestId: string
+  ): PreflightRecord {
+    const intent = this.getIntent(intentId)
+    const normalizedRequest = this.normalizePreflightRequest(intent, request)
+    if (result.venue !== normalizedRequest.venue) {
+      throw new IntentStateError(
+        `Preflight result venue ${result.venue} does not match intent venue ${intent.venue}`
+      )
+    }
+    const record = buildPreflightRecord({
+      intentId,
+      recordedAt: this.now().toISOString(),
+      request: normalizedRequest,
+      result,
+    })
+
+    this.repository.appendPreflightRecord(record)
+    this.appendAuditEvent(intent, 'preflight_recorded', requestId, {
+      preflightId: record.preflightId,
+      preflightOk: record.result.ok,
+      policyFingerprint: record.policyFingerprint,
+    })
+    return record
   }
 
   submitIntent(
@@ -357,5 +400,30 @@ export class ExecutionService {
       intent.ttlSeconds === input.ttlSeconds &&
       JSON.stringify(intent.metadata) === JSON.stringify(input.metadata ?? {})
     )
+  }
+
+  private normalizePreflightRequest(
+    intent: IntentRecord,
+    request: PreflightRequest
+  ): PreflightRequest {
+    const venue = request.venue ?? intent.venue
+    if (venue !== intent.venue) {
+      throw new IntentStateError(
+        `Preflight venue ${venue} does not match intent venue ${intent.venue}`
+      )
+    }
+
+    const positionUsd = request.positionUsd ?? intent.notionalUsd
+    if (positionUsd !== intent.notionalUsd) {
+      throw new IntentStateError(
+        `Preflight position ${positionUsd} does not match intent notional ${intent.notionalUsd}`
+      )
+    }
+
+    return {
+      ...request,
+      venue,
+      positionUsd,
+    }
   }
 }
