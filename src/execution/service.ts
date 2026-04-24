@@ -122,6 +122,11 @@ export class ExecutionService {
     return this.repository.getLatestPreflightRecord(intentId)
   }
 
+  listExecutionLogs(intentId: string): ExecutionLogRecord[] {
+    this.getIntent(intentId)
+    return this.repository.listExecutionLogs(intentId)
+  }
+
   getExecutionPreflightRecord(intentId: string): PreflightRecord | null {
     const intent = this.getIntent(intentId)
     const record = this.repository.getLatestPreflightRecord(intentId)
@@ -486,36 +491,47 @@ export class ExecutionService {
     requestId: string,
     mode: 'append' | 'refresh'
   ): void {
-    this.repository.appendExecutionLog(executionLog)
+    const normalizedExecutionLog: ExecutionLogRecord = {
+      ...executionLog,
+      intentId: intent.intentId,
+      venue: intent.venue,
+    }
 
-    const nowIso = executionLog.recordedAt
+    this.repository.appendExecutionLog(normalizedExecutionLog)
+
+    const nowIso = normalizedExecutionLog.recordedAt
     if (mode === 'append') {
       intent.orders.push(
         buildOrderRecordFromExecutionLog({
           intent,
-          executionLog,
+          executionLog: normalizedExecutionLog,
           recordedAt: nowIso,
         })
       )
     } else if (intent.orders.length > 0) {
       intent.orders[intent.orders.length - 1] = updateOrderRecordFromExecutionLog({
         order: intent.orders[intent.orders.length - 1],
-        executionLog,
+        executionLog: normalizedExecutionLog,
         recordedAt: nowIso,
       })
     }
 
-    intent.status = mapExecutionLogToIntentStatus(executionLog.status)
+    intent.status = mapExecutionLogToIntentStatus(normalizedExecutionLog.status)
     intent.updatedAt = nowIso
     if (intent.status === 'executed') {
       intent.executedAt = nowIso
     }
 
     this.repository.saveIntent(intent)
-    this.appendAuditEvent(intent, mapExecutionLogToAuditEventType(executionLog.status), requestId, {
-      externalOrderId: executionLog.orderId,
-      executionStatus: executionLog.status,
-      logId: executionLog.logId,
-    })
+    this.appendAuditEvent(
+      intent,
+      mapExecutionLogToAuditEventType(normalizedExecutionLog.status),
+      requestId,
+      {
+        externalOrderId: normalizedExecutionLog.orderId,
+        executionStatus: normalizedExecutionLog.status,
+        logId: normalizedExecutionLog.logId,
+      }
+    )
   }
 }

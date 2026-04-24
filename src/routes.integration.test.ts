@@ -559,6 +559,88 @@ describe('integration routes', () => {
     expect(refresh.body.intent.orders.at(-1).status).toBe('filled')
   })
 
+  it('GET /v1/intents/:intentId/preflights and /execution-logs return persisted operator history', async () => {
+    const service = new (await import('./execution/service.js')).ExecutionService({
+      signingAdapter: {
+        async signExecutionRequest(request) {
+          return {
+            ...request,
+            signerRef: 'mock:paper',
+            signature: `sig:${request.requestId}`,
+          }
+        },
+      },
+      executionAdapter: {
+        async placeOrder() {
+          return {
+            logId: 'log-history-filled',
+            intentId: 'intent-history-http',
+            venue: 'paper',
+            status: 'filled' as const,
+            recordedAt: '2026-04-23T00:05:00.000Z',
+            orderId: 'venue-history-http-1',
+            requestId: 'req-execute',
+            preflightOk: true,
+            details: {},
+          }
+        },
+        async cancelOrder() {
+          return {
+            logId: 'log-history-cancelled',
+            intentId: 'intent-history-http',
+            venue: 'paper',
+            status: 'cancelled' as const,
+            recordedAt: '2026-04-23T00:06:00.000Z',
+            orderId: 'venue-history-http-1',
+            requestId: 'req-cancel',
+            preflightOk: true,
+            details: {},
+          }
+        },
+        async getOrderStatus() {
+          return null
+        },
+      },
+    })
+    const { createApp } = await import('./app.js')
+    const app = createApp(1, {
+      executionService: service,
+      preflightEvaluator: {
+        evaluate: vi.fn().mockResolvedValue(buildPreflightResult(true)),
+      },
+    })
+
+    const submit = await request(app).post('/v1/intents').send({
+      intentId: 'intent-history-http',
+      idempotencyKey: 'idem-http-8',
+      accountId: 'acct-primary',
+      market: 'BTC-USD',
+      venue: 'paper',
+      side: 'buy',
+      quantity: 1,
+      notionalUsd: 1000,
+      ttlSeconds: 300,
+    })
+    const intentId = submit.body.intent.intentId
+
+    await request(app).post(`/v1/intents/${intentId}/confirm`).send({})
+    await request(app).post(`/v1/intents/${intentId}/preflight`).send({
+      candidate: buildEnrichedCandidate(),
+    })
+    await request(app).post(`/v1/intents/${intentId}/execute`).send({})
+
+    const preflights = await request(app).get(`/v1/intents/${intentId}/preflights`)
+    const executionLogs = await request(app).get(`/v1/intents/${intentId}/execution-logs`)
+
+    expect(preflights.status).toBe(200)
+    expect(preflights.body.preflightRecords).toHaveLength(1)
+    expect(preflights.body.preflightRecords[0].intentId).toBe(intentId)
+    expect(executionLogs.status).toBe(200)
+    expect(executionLogs.body.executionLogs).toHaveLength(1)
+    expect(executionLogs.body.executionLogs[0].intentId).toBe(intentId)
+    expect(executionLogs.body.executionLogs[0].status).toBe('filled')
+  })
+
   it('POST /analyze/logs returns validation error for bad payload', async () => {
     const { createApp } = await import('./app.js')
     const app = createApp(1)
