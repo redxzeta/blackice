@@ -78,6 +78,101 @@ describe('runWorkerText policy fallback', () => {
     expect(mocks.generateText).toHaveBeenCalledTimes(1)
   })
 
+  it('records LLM metrics for successful non-stream requests', async () => {
+    mocks.generateText.mockResolvedValueOnce({ text: 'ok' })
+
+    const { resetHttpMetrics, renderPrometheusMetrics } = await import('./http/metrics.js')
+    resetHttpMetrics()
+    const { runWorkerText } = await import('./ollama.js')
+
+    await expect(
+      runWorkerText({
+        modelId: 'qwen2.5:14b',
+        input: 'hello world',
+        routeKind: 'chat',
+      })
+    ).resolves.toEqual({ text: 'ok' })
+
+    const metrics = renderPrometheusMetrics()
+    expect(metrics).toContain('llm_request_total{model="qwen2.5:14b",status="success"} 1')
+    expect(metrics).toContain('llm_request_latency_seconds_count{model="qwen2.5:14b"} 1')
+  })
+
+  it('records LLM metrics for failed non-stream requests', async () => {
+    mocks.generateText.mockRejectedValueOnce(new Error('network down'))
+
+    const { resetHttpMetrics, renderPrometheusMetrics } = await import('./http/metrics.js')
+    resetHttpMetrics()
+    const { runWorkerText } = await import('./ollama.js')
+
+    await expect(
+      runWorkerText({
+        modelId: 'qwen2.5:14b',
+        input: 'hello world',
+        routeKind: 'chat',
+      })
+    ).rejects.toThrow('network down')
+
+    const metrics = renderPrometheusMetrics()
+    expect(metrics).toContain('llm_request_total{model="qwen2.5:14b",status="failure"} 1')
+    expect(metrics).toContain('llm_request_latency_seconds_count{model="qwen2.5:14b"} 1')
+  })
+
+  it('records LLM metrics after stream consumption completes', async () => {
+    mocks.streamText.mockReturnValueOnce({
+      fullStream: (async function* stream() {
+        yield { type: 'text-delta', textDelta: 'ok' }
+      })(),
+    })
+
+    const { resetHttpMetrics, renderPrometheusMetrics } = await import('./http/metrics.js')
+    resetHttpMetrics()
+    const { runWorkerTextStream } = await import('./ollama.js')
+
+    const result = runWorkerTextStream({
+      modelId: 'qwen2.5:14b',
+      input: 'hello world',
+      routeKind: 'chat',
+    })
+
+    for await (const _part of result.fullStream) {
+      // Consume the stream so completion can be observed.
+    }
+
+    const metrics = renderPrometheusMetrics()
+    expect(metrics).toContain('llm_request_total{model="qwen2.5:14b",status="success"} 1')
+    expect(metrics).toContain('llm_request_latency_seconds_count{model="qwen2.5:14b"} 1')
+  })
+
+  it('records LLM metrics when stream consumption fails', async () => {
+    mocks.streamText.mockReturnValueOnce({
+      fullStream: (async function* stream() {
+        yield { type: 'text-delta', textDelta: 'before failure' }
+        throw new Error('stream failed')
+      })(),
+    })
+
+    const { resetHttpMetrics, renderPrometheusMetrics } = await import('./http/metrics.js')
+    resetHttpMetrics()
+    const { runWorkerTextStream } = await import('./ollama.js')
+
+    const result = runWorkerTextStream({
+      modelId: 'qwen2.5:14b',
+      input: 'hello world',
+      routeKind: 'chat',
+    })
+
+    await expect(async () => {
+      for await (const _part of result.fullStream) {
+        // Consume the stream so failure can be observed.
+      }
+    }).rejects.toThrow('stream failed')
+
+    const metrics = renderPrometheusMetrics()
+    expect(metrics).toContain('llm_request_total{model="qwen2.5:14b",status="failure"} 1')
+    expect(metrics).toContain('llm_request_latency_seconds_count{model="qwen2.5:14b"} 1')
+  })
+
   it('checks model availability against Ollama tags', async () => {
     vi.stubGlobal(
       'fetch',

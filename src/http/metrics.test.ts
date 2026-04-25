@@ -1,8 +1,8 @@
 import express from 'express'
 import request from 'supertest'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { recordLlmRequest, renderPrometheusMetrics, resetHttpMetrics } from './metrics.js'
 import { requestLoggingMiddleware } from './requestLogging.js'
-import { renderPrometheusMetrics, resetHttpMetrics } from './metrics.js'
 
 describe('http metrics', () => {
   beforeEach(() => {
@@ -54,5 +54,19 @@ describe('http metrics', () => {
       'blackice_http_requests_total{route="/__unmatched__",method="GET",status="404"} 1'
     )
     expect(output).not.toContain('/does-not-exist/123')
+  })
+
+  it('exports LLM request counters and latency histograms by model and status', () => {
+    recordLlmRequest('qwen2.5:14b', 'success', 125)
+    recordLlmRequest('qwen2.5:14b', 'failure', 250)
+
+    const output = renderPrometheusMetrics()
+
+    expect(output).toContain('# TYPE llm_request_total counter')
+    expect(output).toContain('# TYPE llm_request_latency_seconds histogram')
+    expect(output).toContain('llm_request_total{model="qwen2.5:14b",status="success"} 1')
+    expect(output).toContain('llm_request_total{model="qwen2.5:14b",status="failure"} 1')
+    expect(output).toContain('llm_request_latency_seconds_bucket{model="qwen2.5:14b",le="+Inf"} 2')
+    expect(output).toContain('llm_request_latency_seconds_count{model="qwen2.5:14b"} 2')
   })
 })
