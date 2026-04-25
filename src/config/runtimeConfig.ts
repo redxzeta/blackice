@@ -38,6 +38,8 @@ const DEFAULT_EXECUTION_PREFLIGHT_MAX_AGE_SECONDS = 300
 const DEFAULT_EXECUTION_SIGNER_KIND = 'mock'
 const DEFAULT_EXECUTION_STORAGE_KIND = 'memory'
 const DEFAULT_EXECUTION_STORAGE_PATH = ''
+const PRODUCTION_RUNTIME_ENV = 'production'
+const SAFE_PRODUCTION_AUTH_EXEMPT_PATHS = new Set(['/healthz', '/readyz', '/version'])
 
 function clampInt(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
@@ -201,6 +203,76 @@ function formatValidationIssues(error: z.ZodError): string {
   return error.issues.map((issue) => `${formatIssuePath(issue)}: ${issue.message}`).join('; ')
 }
 
+function normalizeExemptPath(value: string): string {
+  const trimmed = value.trim()
+  if (trimmed === '/') {
+    return trimmed
+  }
+  return trimmed.replace(/\/+$/, '') || '/'
+}
+
+function parseAuthExemptPaths(value: string | undefined): string[] {
+  return String(value ?? '/healthz,/readyz,/version')
+    .split(',')
+    .map(normalizeExemptPath)
+    .filter(Boolean)
+}
+
+function isProductionRuntime(): boolean {
+  return (
+    String(process.env.BLACKICE_RUNTIME_ENV ?? '')
+      .trim()
+      .toLowerCase() === PRODUCTION_RUNTIME_ENV
+  )
+}
+
+function validateProductionRuntimeConfig(input: {
+  configFileRaw: string | undefined
+  yamlConfig: z.infer<typeof YamlConfigSchema>
+  runtimeConfig: RuntimeConfig
+}): void {
+  if (!isProductionRuntime()) {
+    return
+  }
+
+  const issues: string[] = []
+  const apiToken = String(process.env.API_TOKEN ?? '').trim()
+  if (!apiToken) {
+    issues.push('API_TOKEN: required when BLACKICE_RUNTIME_ENV=production')
+  }
+
+  if (!input.configFileRaw?.trim()) {
+    issues.push('BLACKICE_CONFIG_FILE: explicit config file is required in production')
+  }
+
+  const exemptPaths = parseAuthExemptPaths(process.env.AUTH_EXEMPT_PATHS)
+  const unsafeExemptPaths = exemptPaths.filter(
+    (entry) => !SAFE_PRODUCTION_AUTH_EXEMPT_PATHS.has(entry)
+  )
+  if (unsafeExemptPaths.length > 0) {
+    issues.push(
+      `AUTH_EXEMPT_PATHS: production exemptions may only include ${[
+        ...SAFE_PRODUCTION_AUTH_EXEMPT_PATHS,
+      ].join(', ')}`
+    )
+  }
+
+  const configuredStorageKind = input.yamlConfig.execution?.storageKind?.trim()
+  if (!configuredStorageKind) {
+    issues.push('execution.storageKind: explicit durable storage kind is required in production')
+  } else if (configuredStorageKind === 'memory') {
+    issues.push('execution.storageKind: memory storage is not allowed in production')
+  }
+
+  if (!input.runtimeConfig.execution.storagePath.trim()) {
+    issues.push('execution.storagePath: required for production durable storage')
+  }
+
+  if (issues.length > 0) {
+    throw new Error(`Invalid production configuration: ${issues.join('; ')}`)
+  }
+}
+
 function loadYamlConfig(filePath: string): z.infer<typeof YamlConfigSchema> {
   if (!existsSync(filePath)) {
     throw new Error(`Config file not found: ${filePath}`)
@@ -228,7 +300,8 @@ function loadYamlConfig(filePath: string): z.infer<typeof YamlConfigSchema> {
 let cachedRuntimeConfig: RuntimeConfig | null = null
 
 function loadRuntimeConfigFromEnv(): RuntimeConfig {
-  const configFileRaw = String(process.env.BLACKICE_CONFIG_FILE ?? DEFAULT_CONFIG_FILE).trim()
+  const configuredConfigFile = process.env.BLACKICE_CONFIG_FILE
+  const configFileRaw = String(configuredConfigFile ?? DEFAULT_CONFIG_FILE).trim()
   const configFile = path.resolve(configFileRaw)
   const yamlConfig = loadYamlConfig(configFile)
 
@@ -342,6 +415,12 @@ function loadRuntimeConfigFromEnv(): RuntimeConfig {
   if (!result.success) {
     throw new Error(`Invalid runtime config ${configFile}: ${formatValidationIssues(result.error)}`)
   }
+
+  validateProductionRuntimeConfig({
+    configFileRaw: configuredConfigFile,
+    yamlConfig,
+    runtimeConfig: result.data,
+  })
 
   return result.data
 }

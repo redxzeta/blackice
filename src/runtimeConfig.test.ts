@@ -243,4 +243,69 @@ execution:
 
     expect(() => getRuntimeConfig()).toThrow(`Config file not found: ${configFile}`)
   })
+
+  it('requires auth and explicit config selection in production mode', async () => {
+    const { getRuntimeConfig } = await import('./config/runtimeConfig.js')
+
+    vi.stubEnv('BLACKICE_RUNTIME_ENV', 'production')
+
+    expect(() => getRuntimeConfig()).toThrow(/API_TOKEN: required/)
+    expect(() => getRuntimeConfig()).toThrow(/BLACKICE_CONFIG_FILE: explicit config file/)
+  })
+
+  it('rejects unsafe production auth exemptions without leaking secrets', async () => {
+    const configFile = writeConfig(`version: 1
+execution:
+  storageKind: file
+  storagePath: ./.tmp/prod-execution-state.json
+`)
+
+    vi.stubEnv('BLACKICE_RUNTIME_ENV', 'production')
+    vi.stubEnv('BLACKICE_CONFIG_FILE', configFile)
+    vi.stubEnv('API_TOKEN', 'super-secret-token-value')
+    vi.stubEnv('AUTH_EXEMPT_PATHS', '/healthz,/metrics,/v1/models/check')
+
+    const { getRuntimeConfig } = await import('./config/runtimeConfig.js')
+
+    expect(() => getRuntimeConfig()).toThrow(/AUTH_EXEMPT_PATHS:/)
+    expect(() => getRuntimeConfig()).not.toThrow(/super-secret-token-value/)
+  })
+
+  it('rejects implicit or memory execution storage in production mode', async () => {
+    const configFile = writeConfig(`version: 1
+execution:
+  storageKind: memory
+`)
+
+    vi.stubEnv('BLACKICE_RUNTIME_ENV', 'production')
+    vi.stubEnv('BLACKICE_CONFIG_FILE', configFile)
+    vi.stubEnv('API_TOKEN', 'super-secret-token-value')
+
+    const { getRuntimeConfig } = await import('./config/runtimeConfig.js')
+
+    expect(() => getRuntimeConfig()).toThrow(/execution\.storageKind: memory storage/)
+    expect(() => getRuntimeConfig()).toThrow(/execution\.storagePath: required/)
+  })
+
+  it('allows production mode with safe auth exemptions and durable storage', async () => {
+    const configFile = writeConfig(`version: 1
+execution:
+  storageKind: file
+  storagePath: ./.tmp/prod-execution-state.json
+`)
+
+    vi.stubEnv('BLACKICE_RUNTIME_ENV', 'production')
+    vi.stubEnv('BLACKICE_CONFIG_FILE', configFile)
+    vi.stubEnv('API_TOKEN', 'super-secret-token-value')
+    vi.stubEnv('AUTH_EXEMPT_PATHS', '/healthz,/readyz,/version')
+
+    const { getRuntimeConfig } = await import('./config/runtimeConfig.js')
+
+    expect(getRuntimeConfig()).toMatchObject({
+      execution: {
+        storageKind: 'file',
+        storagePath: './.tmp/prod-execution-state.json',
+      },
+    })
+  })
 })
