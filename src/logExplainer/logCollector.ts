@@ -3,7 +3,7 @@ import path from 'node:path'
 import { parse as parseYaml } from 'yaml'
 import type { AnalyzeLogsBatchLokiRequest, AnalyzeLogsRequest } from './schema.js'
 import { getRuntimeConfig } from '../config/runtimeConfig.js'
-import { runBoundedCommand } from '../safety.js'
+import { createBoundedCommandRunner } from '../safety.js'
 
 const runtimeConfig = getRuntimeConfig()
 const LOG_COLLECTION_TIMEOUT_MS = Number(runtimeConfig.limits.logCollectionTimeoutMs)
@@ -84,21 +84,29 @@ function clampMaxLines(maxLines: number): number {
   return Math.min(maxLines, MAX_LINES_CAP)
 }
 
-function runAllowedCommand(command: 'journalctl' | 'docker', args: string[]): Promise<string> {
-  return runBoundedCommand(command, args, {
-    timeoutMs: LOG_COLLECTION_TIMEOUT_MS,
-    maxBytes: MAX_COMMAND_BYTES,
-    onError: (message, status) => {
-      if (status === 504) {
-        return buildError(504, `log collection timed out for ${command}`)
-      }
-      if (status === 413) {
-        return buildError(413, 'command output exceeds MAX_COMMAND_BYTES limit')
-      }
-      return buildError(status ?? 500, message)
-    },
-  })
+function buildCommandError(command: 'journalctl' | 'docker') {
+  return (message: string, status?: number): Error => {
+    if (status === 504) {
+      return buildError(504, `log collection timed out for ${command}`)
+    }
+    if (status === 413) {
+      return buildError(413, 'command output exceeds MAX_COMMAND_BYTES limit')
+    }
+    return buildError(status ?? 500, message)
+  }
 }
+
+const runJournalctlCommand = createBoundedCommandRunner({
+  timeoutMs: LOG_COLLECTION_TIMEOUT_MS,
+  maxBytes: MAX_COMMAND_BYTES,
+  onError: buildCommandError('journalctl'),
+})
+
+const runDockerCommand = createBoundedCommandRunner({
+  timeoutMs: LOG_COLLECTION_TIMEOUT_MS,
+  maxBytes: MAX_COMMAND_BYTES,
+  onError: buildCommandError('docker'),
+})
 
 async function collectJournalctlLogs(input: AnalyzeLogsRequest): Promise<string> {
   const safeTarget = sanitizeTarget(input.target)
@@ -118,7 +126,7 @@ async function collectJournalctlLogs(input: AnalyzeLogsRequest): Promise<string>
     args.push('-u', safeTarget)
   }
 
-  return runAllowedCommand('journalctl', args)
+  return runJournalctlCommand('journalctl', args)
 }
 
 async function collectDockerLogs(input: AnalyzeLogsRequest): Promise<string> {
@@ -129,7 +137,7 @@ async function collectDockerLogs(input: AnalyzeLogsRequest): Promise<string> {
   const sinceDate = new Date(Date.now() - safeHours * 60 * 60 * 1000).toISOString()
   const args = ['logs', '--tail', String(safeMaxLines), '--since', sinceDate, safeTarget]
 
-  return runAllowedCommand('docker', args)
+  return runDockerCommand('docker', args)
 }
 
 function parseStringArray(value: unknown, field: string, required: boolean): string[] {

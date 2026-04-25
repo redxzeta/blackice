@@ -2,7 +2,7 @@ import os from 'node:os'
 import type { ActionEnvelope } from './schema.js'
 import { runWorkerText } from './ollama.js'
 import { chooseActionModel } from './router.js'
-import { isPathWithinAllowlist, runBoundedCommand } from './safety.js'
+import { createBoundedCommandRunner, isPathWithinAllowlist } from './safety.js'
 const ACTIONS_ENABLED = (process.env.ACTIONS_ENABLED ?? 'true').toLowerCase() === 'true'
 const COMMAND_TIMEOUT_MS = 4_000
 const COMMAND_MAX_BYTES = 1024 * 1024
@@ -24,12 +24,10 @@ type ActionExecutionMetadata = {
   safetyIdentifier?: string
 }
 
-async function runSafeCmd(file: string, args: string[]): Promise<string> {
-  return runBoundedCommand(file, args, {
-    timeoutMs: COMMAND_TIMEOUT_MS,
-    maxBytes: COMMAND_MAX_BYTES,
-  })
-}
+const runActionCommand = createBoundedCommandRunner({
+  timeoutMs: COMMAND_TIMEOUT_MS,
+  maxBytes: COMMAND_MAX_BYTES,
+})
 
 async function runSummaryAction(
   action: ActionEnvelope,
@@ -58,7 +56,7 @@ async function runSummaryAction(
 async function healthcheck(): Promise<string> {
   const hostname = os.hostname()
   const uptimeSec = Math.floor(os.uptime())
-  const diskUsage = await runSafeCmd('df', ['-h', '/'])
+  const diskUsage = await runActionCommand('df', ['-h', '/'])
 
   return [`hostname: ${hostname}`, `uptime_seconds: ${uptimeSec}`, 'disk_usage:', diskUsage].join(
     '\n'
@@ -70,7 +68,11 @@ async function listServices(options: Record<string, unknown>): Promise<string> {
 
   if (mode === 'docker' || mode === 'auto') {
     try {
-      const dockerOut = await runSafeCmd('docker', ['ps', '--format', '{{.Names}}\t{{.Status}}'])
+      const dockerOut = await runActionCommand('docker', [
+        'ps',
+        '--format',
+        '{{.Names}}\t{{.Status}}',
+      ])
       if (dockerOut) {
         return `docker_containers:\n${dockerOut}`
       }
@@ -82,7 +84,7 @@ async function listServices(options: Record<string, unknown>): Promise<string> {
   }
 
   if (mode === 'systemd' || mode === 'auto') {
-    const systemdOut = await runSafeCmd('systemctl', [
+    const systemdOut = await runActionCommand('systemctl', [
       'list-units',
       '--type=service',
       '--state=running',
@@ -113,7 +115,7 @@ async function tailLog(options: Record<string, unknown>): Promise<string> {
     throw new Error('Requested path is not allowlisted.')
   }
 
-  const output = await runSafeCmd('tail', ['-n', String(lines), file])
+  const output = await runActionCommand('tail', ['-n', String(lines), file])
   return `tail_log(${file}, lines=${lines}):\n${output}`
 }
 
