@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const tempDirs: string[] = []
 
-function writeRuntimeConfig(): string {
+function writeRuntimeConfig(options: { maxResponseBytes?: number } = {}): string {
   const dir = mkdtempSync(path.join(tmpdir(), 'blackice-loki-test-'))
   const configFile = path.join(dir, 'blackice.test.yaml')
   const rulesFile = path.join(dir, 'loki-rules.yaml')
@@ -16,7 +16,7 @@ function writeRuntimeConfig(): string {
 loki:
   baseUrl: http://127.0.0.1:3100
   rulesFile: ./loki-rules.yaml
-`
+${options.maxResponseBytes === undefined ? '' : `  maxResponseBytes: ${options.maxResponseBytes}\n`}`
   )
   writeFileSync(
     rulesFile,
@@ -113,6 +113,138 @@ describe('log explainer Loki helpers', () => {
         limit: 10,
       })
     ).rejects.toThrow('Loki query must include host or unit label')
+  })
+
+  it('rejects raw queries and filters outside the configured Loki allowlist', async () => {
+    vi.stubEnv('BLACKICE_CONFIG_FILE', writeRuntimeConfig())
+    const { buildEffectiveLokiQuery } = await import('./logCollector.js')
+
+    expect(() =>
+      buildEffectiveLokiQuery({
+        source: 'loki',
+        query: '{job="blackice"}',
+        filters: { job: 'blackice', host: 'node-1' },
+      })
+    ).toThrow('raw Loki query is not allowed')
+
+    expect(() =>
+      buildEffectiveLokiQuery({
+        source: 'loki',
+        filters: { job: 'blackice', namespace: 'prod' },
+      })
+    ).toThrow('Loki label "namespace" is not allowed')
+
+    expect(() =>
+      buildEffectiveLokiQuery({
+        source: 'loki',
+        filters: { job: 'blackice', host: 'node-2' },
+      })
+    ).toThrow('Loki host "node-2" is not allowed')
+  })
+
+  it('validates selector guard syntax and allowlist rules directly', async () => {
+    vi.stubEnv('BLACKICE_CONFIG_FILE', writeRuntimeConfig())
+    const { validateAllowedLokiSelector } = await import('./logCollector.js')
+
+    expect(validateAllowedLokiSelector('{ unit = "blackice.service", job="blackice" }')).toBe(
+      '{job="blackice",unit="blackice.service"}'
+    )
+    expect(() => validateAllowedLokiSelector('{job=~"blackice"}')).toThrow(
+      'selector contains unsupported operators'
+    )
+    expect(() => validateAllowedLokiSelector('{job="blackice",namespace="prod"}')).toThrow(
+      'Loki label "namespace" is not allowed'
+    )
+  })
+
+  it('returns empty logs for empty Loki stream results', async () => {
+    vi.stubEnv('BLACKICE_CONFIG_FILE', writeRuntimeConfig())
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          status: 'success',
+          data: {
+            resultType: 'streams',
+            result: [],
+          },
+        }),
+      })
+    )
+    const { collectLokiBatchLogs } = await import('./logCollector.js')
+
+    const result = await collectLokiBatchLogs({
+      source: 'loki',
+      filters: { job: 'blackice', host: 'node-1' },
+      limit: 10,
+    })
+
+    expect(result.logs).toBe('')
+  })
+
+  it('rejects malformed Loki query_range payloads', async () => {
+    vi.stubEnv('BLACKICE_CONFIG_FILE', writeRuntimeConfig())
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          status: 'success',
+          data: {
+            resultType: 'matrix',
+            result: [],
+          },
+        }),
+      })
+    )
+    const { collectLokiBatchLogs } = await import('./logCollector.js')
+
+    await expect(
+      collectLokiBatchLogs({
+        source: 'loki',
+        filters: { job: 'blackice', host: 'node-1' },
+        limit: 10,
+      })
+    ).rejects.toThrow('Loki returned an unexpected query_range payload')
+  })
+
+  it('formats stream labels and marks Loki output truncated at the response byte cap', async () => {
+    vi.stubEnv('BLACKICE_CONFIG_FILE', writeRuntimeConfig({ maxResponseBytes: 1000 }))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          status: 'success',
+          data: {
+            resultType: 'streams',
+            result: [
+              {
+                stream: { unit: 'blackice.service', host: 'node-1' },
+                values: [
+                  ['1000000', 'short line'],
+                  ['2000000', 'x'.repeat(1200)],
+                ],
+              },
+            ],
+          },
+        }),
+      })
+    )
+    const { collectLokiBatchLogs } = await import('./logCollector.js')
+
+    const result = await collectLokiBatchLogs({
+      source: 'loki',
+      filters: { job: 'blackice', host: 'node-1' },
+      limit: 10,
+    })
+
+    expect(result.logs).toContain(
+      '1970-01-01T00:00:00.001Z [host=node-1,unit=blackice.service] short line'
+    )
+    expect(result.logs).toContain('[truncated] Loki response exceeded LOKI_MAX_RESPONSE_BYTES')
+    expect(result.logs).not.toContain('x'.repeat(1200))
   })
 
   it('resolves sinceSeconds windows from the current clock', async () => {
