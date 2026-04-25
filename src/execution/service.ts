@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { getRuntimeConfig } from '../config/runtimeConfig.js'
+import { recordExecutionLifecycle, recordPreflightResult } from '../http/metrics.js'
 import type {
   ExecutionAdapter,
   ExecutionLogRecord,
@@ -21,7 +22,6 @@ import {
 } from './executionAdapter.js'
 import { buildPreflightRecord, computePreflightPolicyFingerprint } from './preflight.js'
 import { createExecutionRepository } from './repository.js'
-import { createSigningAdapter } from './signing.js'
 import {
   type AuditEvent,
   AuditEventSchema,
@@ -30,6 +30,7 @@ import {
   IntentRecordSchema,
   type SubmitIntentRequest,
 } from './schema.js'
+import { createSigningAdapter } from './signing.js'
 
 export class ExecutionPolicyError extends Error {
   status = 422
@@ -136,6 +137,7 @@ export class ExecutionService {
 
     const normalizedRequest = this.normalizePreflightRequest(intent, record.request)
     if (!record.result.ok) {
+      recordExecutionLifecycle('preflight_gate', 'blocked', 'preflight_failed')
       throw new ExecutionPolicyError(
         `Latest preflight for intent ${intentId} did not pass`,
         'preflight_failed'
@@ -143,6 +145,7 @@ export class ExecutionService {
     }
 
     if (record.result.venue !== normalizedRequest.venue) {
+      recordExecutionLifecycle('preflight_gate', 'blocked', 'preflight_mismatch')
       throw new ExecutionPolicyError(
         `Latest preflight for intent ${intentId} does not match the current venue`,
         'preflight_mismatch'
@@ -151,6 +154,7 @@ export class ExecutionService {
 
     const expectedFingerprint = computePreflightPolicyFingerprint(normalizedRequest)
     if (record.policyFingerprint !== expectedFingerprint) {
+      recordExecutionLifecycle('preflight_gate', 'blocked', 'preflight_stale')
       throw new ExecutionPolicyError(
         `Latest preflight for intent ${intentId} no longer matches current policy`,
         'preflight_stale'
@@ -159,12 +163,14 @@ export class ExecutionService {
 
     const maxAgeMs = getRuntimeConfig().execution.preflightMaxAgeSeconds * 1000
     if (Date.parse(record.recordedAt) + maxAgeMs < this.now().getTime()) {
+      recordExecutionLifecycle('preflight_gate', 'blocked', 'preflight_stale')
       throw new ExecutionPolicyError(
         `Latest preflight for intent ${intentId} is stale`,
         'preflight_stale'
       )
     }
 
+    recordExecutionLifecycle('preflight_gate', 'allowed', 'ok')
     return record
   }
 
@@ -189,6 +195,7 @@ export class ExecutionService {
     })
 
     this.repository.appendPreflightRecord(record)
+    recordPreflightResult(record.result.ok ? 'pass' : 'fail')
     this.appendAuditEvent(intent, 'preflight_recorded', requestId, {
       preflightId: record.preflightId,
       preflightOk: record.result.ok,
@@ -282,9 +289,11 @@ export class ExecutionService {
       return intent
     }
     if (intent.status !== 'confirmed') {
+      recordExecutionLifecycle('preflight_gate', 'blocked', 'invalid_state')
       throw new IntentStateError(`Intent ${intentId} cannot execute from status ${intent.status}`)
     }
     if (Date.parse(intent.expiresAt) < this.now().getTime()) {
+      recordExecutionLifecycle('preflight_gate', 'blocked', 'intent_expired')
       throw new ExecutionPolicyError(
         `Intent ${intentId} expired before execution`,
         'intent_expired'
@@ -304,6 +313,7 @@ export class ExecutionService {
       signedRequest = await this.signingAdapter.signExecutionRequest(executionRequest)
       intent.signerRef = signedRequest.signerRef
       this.repository.saveIntent(intent)
+      recordExecutionLifecycle('signing', 'success', 'ok')
       this.appendAuditEvent(intent, 'signing_succeeded', requestId, {
         signerRef: signedRequest.signerRef,
       })
@@ -312,6 +322,7 @@ export class ExecutionService {
       intent.status = 'confirmed'
       intent.updatedAt = nowIso
       this.repository.saveIntent(intent)
+      recordExecutionLifecycle('signing', 'failure', 'adapter_error')
       this.appendAuditEvent(intent, 'signing_failed', requestId, {
         error: error instanceof Error ? error.message : String(error),
       })
@@ -329,6 +340,7 @@ export class ExecutionService {
       intent.status = 'confirmed'
       intent.updatedAt = nowIso
       this.repository.saveIntent(intent)
+      recordExecutionLifecycle('placement', 'failure', 'adapter_error')
       this.appendAuditEvent(intent, 'execution_failed', requestId, {
         error: error instanceof Error ? error.message : String(error),
       })
@@ -350,10 +362,16 @@ export class ExecutionService {
       return { intent }
     }
 
-    const executionLog = await this.executionAdapter.getOrderStatus(
-      latestOrder.externalOrderId,
-      requestId
-    )
+    let executionLog: ExecutionLogRecord | null
+    try {
+      executionLog = await this.executionAdapter.getOrderStatus(
+        latestOrder.externalOrderId,
+        requestId
+      )
+    } catch (error) {
+      recordExecutionLifecycle('refresh', 'failure', 'adapter_error')
+      throw error
+    }
     if (!executionLog) {
       return { intent }
     }
@@ -378,6 +396,7 @@ export class ExecutionService {
       return intent
     }
     if (intent.status === 'executed' || intent.status === 'execution_pending') {
+      recordExecutionLifecycle('cancel', 'blocked', 'invalid_state')
       throw new IntentStateError(
         `Intent ${intentId} cannot be cancelled from status ${intent.status}`
       )
@@ -387,6 +406,7 @@ export class ExecutionService {
     intent.status = 'cancelled'
     intent.cancelledAt = nowIso
     intent.updatedAt = nowIso
+    recordExecutionLifecycle('cancel', 'success', 'ok')
     this.appendAuditEvent(intent, 'intent_cancelled', requestId, {})
     this.repository.saveIntent(intent)
     return intent
@@ -523,6 +543,11 @@ export class ExecutionService {
     }
 
     this.repository.saveIntent(intent)
+    recordExecutionLifecycle(
+      mode === 'append' ? 'placement' : 'refresh',
+      normalizedExecutionLog.status,
+      'venue_status'
+    )
     this.appendAuditEvent(
       intent,
       mapExecutionLogToAuditEventType(normalizedExecutionLog.status),

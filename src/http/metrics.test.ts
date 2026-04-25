@@ -1,7 +1,14 @@
 import express from 'express'
 import request from 'supertest'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { recordLlmRequest, renderPrometheusMetrics, resetHttpMetrics } from './metrics.js'
+import {
+  recordExecutionLifecycle,
+  recordLlmRequest,
+  recordPreflightResult,
+  recordRepositoryError,
+  renderPrometheusMetrics,
+  resetHttpMetrics,
+} from './metrics.js'
 import { requestLoggingMiddleware } from './requestLogging.js'
 
 describe('http metrics', () => {
@@ -68,5 +75,32 @@ describe('http metrics', () => {
     expect(output).toContain('llm_request_total{model="qwen2.5:14b",status="failure"} 1')
     expect(output).toContain('llm_request_latency_seconds_bucket{model="qwen2.5:14b",le="+Inf"} 2')
     expect(output).toContain('llm_request_latency_seconds_count{model="qwen2.5:14b"} 2')
+  })
+
+  it('exports bounded operational execution and repository metrics', () => {
+    recordPreflightResult('pass')
+    recordPreflightResult('fail')
+    recordExecutionLifecycle('preflight_gate', 'blocked', 'preflight_required')
+    recordExecutionLifecycle('placement', 'filled', 'venue_status')
+    recordRepositoryError('readiness_check', 'file')
+
+    const output = renderPrometheusMetrics()
+
+    expect(output).toContain('# TYPE blackice_preflight_total counter')
+    expect(output).toContain('blackice_preflight_total{outcome="pass"} 1')
+    expect(output).toContain('blackice_preflight_total{outcome="fail"} 1')
+    expect(output).toContain('# TYPE blackice_execution_lifecycle_total counter')
+    expect(output).toContain(
+      'blackice_execution_lifecycle_total{stage="preflight_gate",outcome="blocked",reason="preflight_required"} 1'
+    )
+    expect(output).toContain(
+      'blackice_execution_lifecycle_total{stage="placement",outcome="filled",reason="venue_status"} 1'
+    )
+    expect(output).toContain('# TYPE blackice_repository_errors_total counter')
+    expect(output).toContain(
+      'blackice_repository_errors_total{operation="readiness_check",storage_kind="file"} 1'
+    )
+    expect(output).not.toContain('request_id')
+    expect(output).not.toContain('marketId')
   })
 })

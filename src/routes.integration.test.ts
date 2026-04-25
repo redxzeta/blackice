@@ -1389,7 +1389,11 @@ describe('integration routes', () => {
     vi.stubEnv('METRICS_EXPOSE_PATH', '/metrics')
 
     const { createApp } = await import('./app.js')
-    const app = createApp(1)
+    const app = createApp(1, {
+      preflightEvaluator: {
+        evaluate: vi.fn().mockResolvedValue(buildPreflightResult(true)),
+      },
+    })
 
     const metricsRes = await request(app).get('/metrics')
     expect(metricsRes.status).toBe(200)
@@ -1399,9 +1403,30 @@ describe('integration routes', () => {
     const healthRes = await request(app).get('/healthz')
     expect(healthRes.status).toBe(200)
 
+    const submit = await request(app).post('/v1/intents').send({
+      idempotencyKey: 'idem-http-metrics',
+      accountId: 'acct-primary',
+      market: 'BTC-USD',
+      venue: 'paper',
+      side: 'buy',
+      quantity: 1,
+      notionalUsd: 1000,
+      ttlSeconds: 300,
+    })
+    const intentId = submit.body.intent.intentId
+    await request(app).post(`/v1/intents/${intentId}/confirm`).send({})
+    await request(app).post(`/v1/intents/${intentId}/preflight`).send({
+      candidate: buildEnrichedCandidate(),
+    })
+    await request(app).post(`/v1/intents/${intentId}/execute`).send({})
+
     const metricsAfterTraffic = await request(app).get('/metrics')
     expect(metricsAfterTraffic.text).toContain(
       'blackice_http_requests_total{route="/healthz",method="GET",status="200"} 1'
+    )
+    expect(metricsAfterTraffic.text).toContain('blackice_preflight_total{outcome="pass"} 1')
+    expect(metricsAfterTraffic.text).toContain(
+      'blackice_execution_lifecycle_total{stage="placement",outcome="filled",reason="venue_status"} 1'
     )
   })
 

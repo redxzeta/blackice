@@ -1,6 +1,7 @@
 import { constants, accessSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { access } from 'node:fs/promises'
 import path from 'node:path'
+import { recordRepositoryError } from '../http/metrics.js'
 import {
   type ExecutionLogRecord,
   type ExecutionRepository,
@@ -63,6 +64,16 @@ function parseState(raw: string): StoredExecutionState {
     ),
     executionLogs: structuredClone(parsed.executionLogs ?? []),
   }
+}
+
+function metricStorageKind(storageKind: string): 'memory' | 'file' | 'other' {
+  if (storageKind === 'memory') {
+    return 'memory'
+  }
+  if (storageKind === 'file' || storageKind === 'sqlite') {
+    return 'file'
+  }
+  return 'other'
 }
 
 export class InMemoryExecutionRepository implements ExecutionRepository {
@@ -208,11 +219,21 @@ export class FileExecutionRepository implements ExecutionRepository {
   }
 
   private readState(): StoredExecutionState {
-    return parseState(readFileSync(this.filePath, 'utf8'))
+    try {
+      return parseState(readFileSync(this.filePath, 'utf8'))
+    } catch (error) {
+      recordRepositoryError('read', 'file')
+      throw error
+    }
   }
 
   private writeState(state: StoredExecutionState): void {
-    writeFileSync(this.filePath, JSON.stringify(state, null, 2))
+    try {
+      writeFileSync(this.filePath, JSON.stringify(state, null, 2))
+    } catch (error) {
+      recordRepositoryError('write', 'file')
+      throw error
+    }
   }
 }
 
@@ -225,11 +246,13 @@ export function createExecutionRepository(options: {
   }
 
   if (!options.storagePath) {
+    recordRepositoryError('create', metricStorageKind(options.storageKind))
     throw new Error(`execution.storagePath is required for storageKind=${options.storageKind}`)
   }
 
   const storageCheck = checkExecutionRepositoryStorageSync(options)
   if (!storageCheck.ok) {
+    recordRepositoryError('create', metricStorageKind(options.storageKind))
     throw new Error(storageCheck.reason ?? 'execution repository storage is unavailable')
   }
 
@@ -257,6 +280,7 @@ export async function checkExecutionRepositoryStorage(options: {
   try {
     await access(parent, constants.R_OK | constants.W_OK)
   } catch {
+    recordRepositoryError('readiness_check', metricStorageKind(options.storageKind))
     return {
       ok: false,
       storageKind: options.storageKind,
@@ -274,6 +298,7 @@ export async function checkExecutionRepositoryStorage(options: {
     await access(storagePath, constants.R_OK | constants.W_OK)
     return { ok: true, storageKind: options.storageKind, storagePath }
   } catch (error) {
+    recordRepositoryError('readiness_check', metricStorageKind(options.storageKind))
     return {
       ok: false,
       storageKind: options.storageKind,
