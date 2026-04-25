@@ -11,6 +11,12 @@ function writeConfig(contents: string): string {
   return file
 }
 
+function missingConfigPath(): string {
+  const dir = mkdtempSync(path.join(tmpdir(), 'blackice-runtime-config-'))
+  tempDirs.push(dir)
+  return path.join(dir, 'missing.yaml')
+}
+
 const tempDirs: string[] = []
 
 beforeEach(() => {
@@ -140,6 +146,32 @@ server:
     })
   })
 
+  it('fills valid defaults when optional sections are missing', async () => {
+    const configFile = writeConfig(`version: 1
+`)
+
+    vi.stubEnv('BLACKICE_CONFIG_FILE', configFile)
+    const { getRuntimeConfig } = await import('./config/runtimeConfig.js')
+
+    expect(getRuntimeConfig()).toMatchObject({
+      server: { port: 3000 },
+      readiness: { timeoutMs: 1500, strict: true },
+      ops: { enabled: false, logBufferMaxEntries: 2000 },
+      debate: {
+        maxConcurrent: 1,
+        modelAllowlist: ['llama3.1:8b', 'qwen2.5:14b', 'qwen2.5-coder:14b'],
+      },
+      ollama: {
+        baseUrl: 'http://192.168.1.230:11434',
+        model: 'qwen2.5:14b',
+      },
+      execution: {
+        defaultVenue: 'paper',
+        allowedVenues: ['paper'],
+      },
+    })
+  })
+
   it('aligns default allowed venues with a configured default venue', async () => {
     const configFile = writeConfig(`version: 1
 execution:
@@ -156,5 +188,59 @@ execution:
         storagePath: '',
       },
     })
+  })
+
+  it('reports YAML parse failures with the selected config file path', async () => {
+    const configFile = writeConfig(`version: [
+`)
+
+    vi.stubEnv('BLACKICE_CONFIG_FILE', configFile)
+    const { getRuntimeConfig } = await import('./config/runtimeConfig.js')
+
+    expect(() => getRuntimeConfig()).toThrow(`Invalid config file ${configFile}: YAML parse error:`)
+  })
+
+  it('reports schema validation failures with field paths', async () => {
+    const configFile = writeConfig(`version: 1
+ops:
+  logBufferMaxEntries: 10
+`)
+
+    vi.stubEnv('BLACKICE_CONFIG_FILE', configFile)
+    const { getRuntimeConfig } = await import('./config/runtimeConfig.js')
+
+    expect(() => getRuntimeConfig()).toThrow(/ops\.logBufferMaxEntries:/)
+  })
+
+  it('rejects unknown top-level config keys with a root-level message', async () => {
+    const configFile = writeConfig(`version: 1
+unexpected: true
+`)
+
+    vi.stubEnv('BLACKICE_CONFIG_FILE', configFile)
+    const { getRuntimeConfig } = await import('./config/runtimeConfig.js')
+
+    expect(() => getRuntimeConfig()).toThrow(/<root>: Unrecognized key/)
+  })
+
+  it('rejects empty execution venue allowlists after normalization', async () => {
+    const configFile = writeConfig(`version: 1
+execution:
+  allowedVenues: []
+`)
+
+    vi.stubEnv('BLACKICE_CONFIG_FILE', configFile)
+    const { getRuntimeConfig } = await import('./config/runtimeConfig.js')
+
+    expect(() => getRuntimeConfig()).toThrow(/execution\.allowedVenues:/)
+  })
+
+  it('fails when BLACKICE_CONFIG_FILE selects a missing file', async () => {
+    const configFile = missingConfigPath()
+
+    vi.stubEnv('BLACKICE_CONFIG_FILE', configFile)
+    const { getRuntimeConfig } = await import('./config/runtimeConfig.js')
+
+    expect(() => getRuntimeConfig()).toThrow(`Config file not found: ${configFile}`)
   })
 })
