@@ -69,7 +69,11 @@ const RATE_LIMIT_POLICIES: Record<'analyze' | 'batch', RateLimitPolicy> = {
 }
 const rateLimitBuckets = new Map<string, RateLimitBucket>()
 
-function resolveBatchMode(input: { mode?: BatchMode; analyze?: boolean; collectOnly?: boolean }): {
+export function resolveBatchMode(input: {
+  mode?: BatchMode
+  analyze?: boolean
+  collectOnly?: boolean
+}): {
   mode: BatchMode
   legacyCollectOnly: boolean
 } {
@@ -93,7 +97,7 @@ function resolveBatchMode(input: { mode?: BatchMode; analyze?: boolean; collectO
   }
 }
 
-function resolveEvidenceLinesForMode(
+export function resolveEvidenceLinesForMode(
   mode: BatchMode,
   requested: number | undefined
 ): number | undefined {
