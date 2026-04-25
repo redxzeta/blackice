@@ -471,6 +471,136 @@ describe('integration routes', () => {
     expect(executeAfterFailedPreflight.body.code).toBe('preflight_failed')
   })
 
+  it('POST /v1/intents/:intentId/execute blocks stale persisted preflights', async () => {
+    const repoRoot = process.cwd()
+    const configPath = path.join(repoRoot, '.tmp-preflight-stale-config.yaml')
+    try {
+      await writeFile(
+        configPath,
+        ['version: 1', 'execution:', '  preflightMaxAgeSeconds: 1'].join('\n')
+      )
+      vi.stubEnv('BLACKICE_CONFIG_FILE', configPath)
+
+      let now = Date.parse('2026-04-23T00:00:00.000Z')
+      const { ExecutionService } = await import('./execution/service.js')
+      const { createApp } = await import('./app.js')
+      const app = createApp(1, {
+        executionService: new ExecutionService({
+          now: () => new Date(now),
+        }),
+        preflightEvaluator: {
+          evaluate: vi.fn().mockResolvedValue(buildPreflightResult(true)),
+        },
+      })
+
+      const submit = await request(app).post('/v1/intents').send({
+        idempotencyKey: 'idem-http-stale-preflight',
+        accountId: 'acct-primary',
+        market: 'DOGE-USD',
+        venue: 'paper',
+        side: 'buy',
+        quantity: 5,
+        notionalUsd: 250,
+        ttlSeconds: 300,
+      })
+      const intentId = submit.body.intent.intentId
+
+      await request(app).post(`/v1/intents/${intentId}/confirm`).send({})
+      await request(app).post(`/v1/intents/${intentId}/preflight`).send({
+        candidate: buildEnrichedCandidate(),
+      })
+      now += 2_000
+      const executeAfterStalePreflight = await request(app)
+        .post(`/v1/intents/${intentId}/execute`)
+        .send({})
+
+      expect(executeAfterStalePreflight.status).toBe(422)
+      expect(executeAfterStalePreflight.body.code).toBe('preflight_stale')
+    } finally {
+      await rm(configPath, { force: true })
+    }
+  })
+
+  it('POST /v1/intents/:intentId/execute is retry-safe after terminal execution', async () => {
+    const placeOrder = vi.fn(async () => ({
+      logId: 'log-duplicate-filled',
+      intentId: 'intent-duplicate-http',
+      venue: 'paper',
+      status: 'filled' as const,
+      recordedAt: '2026-04-23T00:02:00.000Z',
+      orderId: 'venue-duplicate-http-1',
+      requestId: 'req-execute',
+      preflightOk: true,
+      details: {},
+    }))
+    const service = new (await import('./execution/service.js')).ExecutionService({
+      signingAdapter: {
+        async signExecutionRequest(request) {
+          return {
+            ...request,
+            signerRef: 'mock:paper',
+            signature: `sig:${request.requestId}`,
+          }
+        },
+      },
+      executionAdapter: {
+        placeOrder,
+        async cancelOrder() {
+          return {
+            logId: 'log-duplicate-cancelled',
+            intentId: 'intent-duplicate-http',
+            venue: 'paper',
+            status: 'cancelled' as const,
+            recordedAt: '2026-04-23T00:03:00.000Z',
+            orderId: 'venue-duplicate-http-1',
+            requestId: 'req-cancel',
+            preflightOk: true,
+            details: {},
+          }
+        },
+        async getOrderStatus() {
+          return null
+        },
+      },
+    })
+    const { createApp } = await import('./app.js')
+    const app = createApp(1, {
+      executionService: service,
+      preflightEvaluator: {
+        evaluate: vi.fn().mockResolvedValue(buildPreflightResult(true)),
+      },
+    })
+
+    const submit = await request(app).post('/v1/intents').send({
+      intentId: 'intent-duplicate-http',
+      idempotencyKey: 'idem-http-duplicate-execute',
+      accountId: 'acct-primary',
+      market: 'SOL-USD',
+      venue: 'paper',
+      side: 'buy',
+      quantity: 10,
+      notionalUsd: 1500,
+      ttlSeconds: 300,
+    })
+    const intentId = submit.body.intent.intentId
+
+    await request(app).post(`/v1/intents/${intentId}/confirm`).send({})
+    await request(app).post(`/v1/intents/${intentId}/preflight`).send({
+      candidate: buildEnrichedCandidate(),
+    })
+
+    const firstExecute = await request(app).post(`/v1/intents/${intentId}/execute`).send({})
+    const secondExecute = await request(app).post(`/v1/intents/${intentId}/execute`).send({})
+    const executionLogs = await request(app).get(`/v1/intents/${intentId}/execution-logs`)
+
+    expect(firstExecute.status).toBe(200)
+    expect(secondExecute.status).toBe(200)
+    expect(secondExecute.body.intent.status).toBe('executed')
+    expect(secondExecute.body.intent.orders).toHaveLength(1)
+    expect(executionLogs.body.executionLogs).toHaveLength(1)
+    expect(placeOrder).toHaveBeenCalledTimes(1)
+  })
+
   it('POST /v1/intents/:intentId/refresh returns updated intent state when venue status advances', async () => {
     const service = new (await import('./execution/service.js')).ExecutionService({
       signingAdapter: {
@@ -557,6 +687,128 @@ describe('integration routes', () => {
     expect(refresh.body.executionLog.status).toBe('filled')
     expect(refresh.body.intent.status).toBe('executed')
     expect(refresh.body.intent.orders.at(-1).status).toBe('filled')
+  })
+
+  it('POST /v1/intents/:intentId/refresh is read-only after terminal execution', async () => {
+    const getOrderStatus = vi.fn(async () => ({
+      logId: 'log-terminal-refresh',
+      intentId: 'intent-terminal-refresh-http',
+      venue: 'paper',
+      status: 'filled' as const,
+      recordedAt: '2026-04-23T00:04:00.000Z',
+      orderId: 'venue-terminal-refresh-http-1',
+      requestId: 'req-refresh',
+      preflightOk: true,
+      details: {},
+    }))
+    const service = new (await import('./execution/service.js')).ExecutionService({
+      signingAdapter: {
+        async signExecutionRequest(request) {
+          return {
+            ...request,
+            signerRef: 'mock:paper',
+            signature: `sig:${request.requestId}`,
+          }
+        },
+      },
+      executionAdapter: {
+        async placeOrder() {
+          return {
+            logId: 'log-terminal-filled',
+            intentId: 'intent-terminal-refresh-http',
+            venue: 'paper',
+            status: 'filled' as const,
+            recordedAt: '2026-04-23T00:03:00.000Z',
+            orderId: 'venue-terminal-refresh-http-1',
+            requestId: 'req-execute',
+            preflightOk: true,
+            details: {},
+          }
+        },
+        async cancelOrder() {
+          return {
+            logId: 'log-terminal-cancelled',
+            intentId: 'intent-terminal-refresh-http',
+            venue: 'paper',
+            status: 'cancelled' as const,
+            recordedAt: '2026-04-23T00:05:00.000Z',
+            orderId: 'venue-terminal-refresh-http-1',
+            requestId: 'req-cancel',
+            preflightOk: true,
+            details: {},
+          }
+        },
+        getOrderStatus,
+      },
+    })
+    const { createApp } = await import('./app.js')
+    const app = createApp(1, {
+      executionService: service,
+      preflightEvaluator: {
+        evaluate: vi.fn().mockResolvedValue(buildPreflightResult(true)),
+      },
+    })
+
+    const submit = await request(app).post('/v1/intents').send({
+      intentId: 'intent-terminal-refresh-http',
+      idempotencyKey: 'idem-http-terminal-refresh',
+      accountId: 'acct-primary',
+      market: 'SOL-USD',
+      venue: 'paper',
+      side: 'buy',
+      quantity: 10,
+      notionalUsd: 1500,
+      ttlSeconds: 300,
+    })
+    const intentId = submit.body.intent.intentId
+
+    await request(app).post(`/v1/intents/${intentId}/confirm`).send({})
+    await request(app).post(`/v1/intents/${intentId}/preflight`).send({
+      candidate: buildEnrichedCandidate(),
+    })
+    await request(app).post(`/v1/intents/${intentId}/execute`).send({})
+
+    const refresh = await request(app).post(`/v1/intents/${intentId}/refresh`).send({})
+
+    expect(refresh.status).toBe(200)
+    expect(refresh.body.executionLog).toBeUndefined()
+    expect(refresh.body.intent.status).toBe('executed')
+    expect(getOrderStatus).not.toHaveBeenCalled()
+  })
+
+  it('POST /v1/intents/:intentId/cancel rejects terminal executed intents', async () => {
+    const { createApp } = await import('./app.js')
+    const app = createApp(1, {
+      preflightEvaluator: {
+        evaluate: vi.fn().mockResolvedValue(buildPreflightResult(true)),
+      },
+    })
+
+    const submit = await request(app).post('/v1/intents').send({
+      idempotencyKey: 'idem-http-cancel-executed',
+      accountId: 'acct-primary',
+      market: 'BTC-USD',
+      venue: 'paper',
+      side: 'buy',
+      quantity: 1,
+      notionalUsd: 1000,
+      ttlSeconds: 300,
+    })
+    const intentId = submit.body.intent.intentId
+
+    await request(app).post(`/v1/intents/${intentId}/confirm`).send({})
+    await request(app).post(`/v1/intents/${intentId}/preflight`).send({
+      candidate: buildEnrichedCandidate(),
+    })
+    await request(app).post(`/v1/intents/${intentId}/execute`).send({})
+
+    const cancel = await request(app).post(`/v1/intents/${intentId}/cancel`).send({})
+    const executionLogs = await request(app).get(`/v1/intents/${intentId}/execution-logs`)
+
+    expect(cancel.status).toBe(409)
+    expect(cancel.body.error).toContain('cannot be cancelled from status executed')
+    expect(executionLogs.body.executionLogs).toHaveLength(1)
+    expect(executionLogs.body.executionLogs[0].status).toBe('filled')
   })
 
   it('GET /v1/intents/:intentId/preflights and /execution-logs return persisted operator history', async () => {
