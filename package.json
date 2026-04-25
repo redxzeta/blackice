@@ -20,6 +20,7 @@
     "test:unit": "vitest run src/log.test.ts src/http/requestLogging.test.ts",
     "test:integration": "vitest run src/routes.integration.test.ts",
     "test:watch": "vitest",
+    "smoke:prod": "pnpm run build && node scripts/prod-smoke.mjs",
     "version:patch": "pnpm version patch -m \"chore(release): %s\"",
     "version:minor": "pnpm version minor -m \"chore(release): %s\"",
     "version:major": "pnpm version major -m \"chore(release): %s\"",
