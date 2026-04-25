@@ -1,14 +1,18 @@
 import type { Response } from 'express'
-import { runWorkerTextStream } from '../ollama.js'
-import { nowSeconds, openAICompletionId } from './responseBuilders.js'
 import { getPolicyFallbackModel } from '../ai/modelPolicy.js'
 import { parsePolicySignal } from '../ai/policySignal.js'
 import { log } from '../log.js'
+import { runWorkerTextStream } from '../ollama.js'
+import { nowSeconds, openAICompletionId } from './responseBuilders.js'
 
 type StreamDeltaEvent = {
   type: 'text-delta'
   textDelta: string
 }
+
+const MAX_STRUCTURED_GATE_BUFFER_CHARS = 8192
+const SUPPRESSED_TOOL_PAYLOAD_MESSAGE =
+  'Model output suppressed because it resembled a tool call payload.'
 
 function sendSSEChunk(res: Response, chunk: unknown): void {
   res.write(`data: ${JSON.stringify(chunk)}\n\n`)
@@ -21,6 +25,186 @@ function isTextDeltaEvent(part: unknown): part is StreamDeltaEvent {
     (part as { type?: unknown }).type === 'text-delta' &&
     typeof (part as { textDelta?: unknown }).textDelta === 'string'
   )
+}
+
+type JsonCandidate = { kind: 'none' } | { kind: 'pending' } | { kind: 'json'; text: string }
+
+function getLeadingJsonCandidate(buffer: string): JsonCandidate {
+  const trimmedStart = buffer.trimStart()
+
+  if (!trimmedStart) {
+    return { kind: 'pending' }
+  }
+
+  let candidate = trimmedStart
+
+  if (candidate.startsWith('```')) {
+    const fenceLineEnd = candidate.indexOf('\n')
+    if (fenceLineEnd === -1) {
+      return { kind: 'pending' }
+    }
+
+    candidate = candidate.slice(fenceLineEnd + 1).trimStart()
+
+    if (!candidate) {
+      return { kind: 'pending' }
+    }
+  }
+
+  if (!candidate.startsWith('{') && !candidate.startsWith('[')) {
+    return { kind: 'none' }
+  }
+
+  return { kind: 'json', text: candidate }
+}
+
+function parseJsonStringEnd(text: string, start: number): number | null {
+  for (let index = start + 1; index < text.length; index += 1) {
+    const char = text[index]
+    if (char === '\\') {
+      index += 1
+      continue
+    }
+    if (char === '"') {
+      return index + 1
+    }
+  }
+
+  return null
+}
+
+function collectTopLevelObjectKeys(text: string): Set<string> {
+  const keys = new Set<string>()
+  if (!text.startsWith('{')) {
+    return keys
+  }
+
+  let index = 1
+  while (index < text.length) {
+    while (/\s|,/.test(text[index] ?? '')) {
+      index += 1
+    }
+
+    if (text[index] === '}') {
+      break
+    }
+
+    if (text[index] !== '"') {
+      break
+    }
+
+    const keyEnd = parseJsonStringEnd(text, index)
+    if (keyEnd === null) {
+      break
+    }
+
+    let colonIndex = keyEnd
+    while (/\s/.test(text[colonIndex] ?? '')) {
+      colonIndex += 1
+    }
+
+    if (text[colonIndex] !== ':') {
+      break
+    }
+
+    try {
+      keys.add(JSON.parse(text.slice(index, keyEnd)) as string)
+    } catch {
+      break
+    }
+
+    index = colonIndex + 1
+    const stack: string[] = []
+    let inString = false
+
+    while (index < text.length) {
+      const char = text[index]
+
+      if (inString) {
+        if (char === '\\') {
+          index += 2
+          continue
+        }
+        if (char === '"') {
+          inString = false
+        }
+        index += 1
+        continue
+      }
+
+      if (char === '"') {
+        inString = true
+        index += 1
+        continue
+      }
+
+      if (char === '{' || char === '[') {
+        stack.push(char === '{' ? '}' : ']')
+      } else if ((char === '}' || char === ']') && stack.at(-1) === char) {
+        stack.pop()
+      } else if (stack.length === 0 && (char === ',' || char === '}')) {
+        break
+      }
+
+      index += 1
+    }
+
+    if (keys.has('tool_calls') || (keys.has('name') && keys.has('arguments'))) {
+      break
+    }
+  }
+
+  return keys
+}
+
+function looksLikeToolCallPayload(text: string): boolean {
+  const keys = collectTopLevelObjectKeys(text)
+  return keys.has('tool_calls') || (keys.has('name') && keys.has('arguments'))
+}
+
+function findCompleteJsonEnd(text: string): number | null {
+  const stack: string[] = []
+  let inString = false
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index]
+
+    if (inString) {
+      if (char === '\\') {
+        index += 1
+        continue
+      }
+      if (char === '"') {
+        inString = false
+      }
+      continue
+    }
+
+    if (char === '"') {
+      inString = true
+      continue
+    }
+
+    if (char === '{' || char === '[') {
+      stack.push(char === '{' ? '}' : ']')
+      continue
+    }
+
+    if (char !== '}' && char !== ']') {
+      continue
+    }
+
+    if (stack.at(-1) !== char) {
+      return index + 1
+    }
+
+    stack.pop()
+    if (stack.length === 0) {
+      return index + 1
+    }
+  }
+
+  return null
 }
 
 export async function handleChatStreaming(
@@ -65,7 +249,6 @@ export async function handleChatStreaming(
     })
   }
 
-  const suppressionEnabled = process.env.STREAM_SUPPRESS_TOOLISH === '1'
   const pipeModelStream = async (activeModel: string): Promise<void> => {
     const streamResult = runWorkerTextStream({
       modelId: activeModel,
@@ -77,83 +260,12 @@ export async function handleChatStreaming(
       routeKind: 'chat',
     })
 
-    let gating = suppressionEnabled
+    let gating = true
     let preBuffer = ''
 
-    for await (const part of streamResult.fullStream) {
-      if (!isTextDeltaEvent(part)) {
-        continue
-      }
-
-      let delta = String(part.textDelta ?? '')
-      if (!delta) {
-        continue
-      }
-
-      if (suppressionEnabled) {
-        delta = delta.replace(/```/g, '')
-      }
-
-      if (gating) {
-        preBuffer += delta
-        const trimmed = preBuffer.trim()
-
-        if (trimmed.length > 220 || preBuffer.includes('\n') || !trimmed.startsWith('{')) {
-          gating = false
-          if (preBuffer) {
-            sendRoleChunk()
-            sendSSEChunk(res, {
-              id,
-              object: 'chat.completion.chunk',
-              created,
-              model: responseModel,
-              choices: [
-                {
-                  index: 0,
-                  delta: { content: preBuffer },
-                  finish_reason: null,
-                },
-              ],
-            })
-            emittedAnyContent = true
-          }
-          preBuffer = ''
-          continue
-        }
-
-        try {
-          const parsed = JSON.parse(trimmed) as Record<string, unknown>
-          const looksToolCall =
-            (typeof parsed.name === 'string' &&
-              Object.prototype.hasOwnProperty.call(parsed, 'arguments')) ||
-            Object.prototype.hasOwnProperty.call(parsed, 'tool_calls')
-
-          if (looksToolCall) {
-            gating = false
-            preBuffer = ''
-            sendRoleChunk()
-            sendSSEChunk(res, {
-              id,
-              object: 'chat.completion.chunk',
-              created,
-              model: responseModel,
-              choices: [
-                {
-                  index: 0,
-                  delta: {
-                    content: 'Model output suppressed because it resembled a tool call payload.',
-                  },
-                  finish_reason: null,
-                },
-              ],
-            })
-            emittedAnyContent = true
-          }
-        } catch {
-          // Wait for additional tokens while gating.
-        }
-
-        continue
+    const emitContent = (content: string): void => {
+      if (!content) {
+        return
       }
 
       sendRoleChunk()
@@ -165,12 +277,90 @@ export async function handleChatStreaming(
         choices: [
           {
             index: 0,
-            delta: { content: delta },
+            delta: { content },
             finish_reason: null,
           },
         ],
       })
       emittedAnyContent = true
+    }
+
+    const suppressToolPayload = (): void => {
+      gating = false
+      preBuffer = ''
+      emitContent(SUPPRESSED_TOOL_PAYLOAD_MESSAGE)
+    }
+
+    const inspectBufferedPrefix = (): void => {
+      const candidate = getLeadingJsonCandidate(preBuffer)
+
+      if (candidate.kind === 'pending') {
+        return
+      }
+
+      if (candidate.kind === 'none') {
+        gating = false
+        emitContent(preBuffer)
+        preBuffer = ''
+        return
+      }
+
+      if (looksLikeToolCallPayload(candidate.text)) {
+        suppressToolPayload()
+        return
+      }
+
+      const completeJsonEnd = findCompleteJsonEnd(candidate.text)
+      if (completeJsonEnd !== null) {
+        try {
+          JSON.parse(candidate.text.slice(0, completeJsonEnd))
+        } catch {
+          gating = false
+          emitContent(preBuffer)
+          preBuffer = ''
+          return
+        }
+
+        gating = false
+        emitContent(preBuffer)
+        preBuffer = ''
+        return
+      }
+
+      if (preBuffer.length > MAX_STRUCTURED_GATE_BUFFER_CHARS) {
+        gating = false
+        emitContent(preBuffer)
+        preBuffer = ''
+      }
+    }
+
+    for await (const part of streamResult.fullStream) {
+      if (!isTextDeltaEvent(part)) {
+        continue
+      }
+
+      const delta = String(part.textDelta ?? '')
+      if (!delta) {
+        continue
+      }
+
+      if (gating) {
+        preBuffer += delta
+        inspectBufferedPrefix()
+        continue
+      }
+
+      emitContent(delta)
+    }
+
+    if (gating && preBuffer) {
+      const candidate = getLeadingJsonCandidate(preBuffer)
+      if (candidate.kind === 'json' && looksLikeToolCallPayload(candidate.text)) {
+        suppressToolPayload()
+        return
+      }
+
+      emitContent(preBuffer)
     }
   }
 
