@@ -4,6 +4,11 @@ const mocks = vi.hoisted(() => ({
   checkModelAvailability: vi.fn(),
   getConfiguredOllamaModel: vi.fn(() => 'qwen2.5:14b'),
   logInfo: vi.fn(),
+  validateRuntimeConfig: vi.fn(),
+}))
+
+vi.mock('./config/runtimeConfig.js', () => ({
+  validateRuntimeConfig: mocks.validateRuntimeConfig,
 }))
 
 vi.mock('./ollama.js', () => ({
@@ -24,6 +29,7 @@ describe('runStartupModelPreflight', () => {
   beforeEach(() => {
     vi.resetModules()
     vi.clearAllMocks()
+    mocks.validateRuntimeConfig.mockReturnValue({})
     process.env = {
       ...originalEnv,
       MODEL_PREFLIGHT_ON_START: '1',
@@ -36,6 +42,20 @@ describe('runStartupModelPreflight', () => {
     const { runStartupModelPreflight } = await import('./startupPreflight.js')
     await runStartupModelPreflight()
 
+    expect(mocks.validateRuntimeConfig).toHaveBeenCalledOnce()
+    expect(mocks.checkModelAvailability).not.toHaveBeenCalled()
+  })
+
+  it('fails startup when runtime config validation fails', async () => {
+    mocks.validateRuntimeConfig.mockImplementation(() => {
+      throw new Error('Invalid runtime config: execution.allowedVenues: Too small')
+    })
+
+    const { runStartupModelPreflight } = await import('./startupPreflight.js')
+
+    await expect(runStartupModelPreflight()).rejects.toThrow(
+      'Invalid runtime config: execution.allowedVenues: Too small'
+    )
     expect(mocks.checkModelAvailability).not.toHaveBeenCalled()
   })
 
@@ -53,6 +73,7 @@ describe('runStartupModelPreflight', () => {
     await expect(runStartupModelPreflight()).rejects.toThrow(
       'startup_preflight_failed_model_not_found:missing-model'
     )
+    expect(mocks.validateRuntimeConfig).toHaveBeenCalledOnce()
   })
 
   it('logs success when the configured model is available', async () => {
@@ -67,6 +88,7 @@ describe('runStartupModelPreflight', () => {
     const { runStartupModelPreflight } = await import('./startupPreflight.js')
     await runStartupModelPreflight()
 
+    expect(mocks.validateRuntimeConfig).toHaveBeenCalledOnce()
     expect(mocks.logInfo).toHaveBeenCalledWith('startup_model_preflight_ok', {
       model: 'qwen2.5:14b',
       latency_ms: 21,

@@ -1,8 +1,11 @@
 import { env } from './config/env.js'
+import { validateRuntimeConfig } from './config/runtimeConfig.js'
 import { checkModelAvailability, getConfiguredOllamaModel, ollamaBaseURL } from './ollama.js'
 import { log } from './log.js'
 
 export async function runStartupModelPreflight(): Promise<void> {
+  validateRuntimeConfig()
+
   if (!env.MODEL_PREFLIGHT_ON_START) {
     return
   }

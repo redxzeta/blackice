@@ -193,27 +193,41 @@ const RuntimeConfigSchema = z
 
 export type RuntimeConfig = z.infer<typeof RuntimeConfigSchema>
 
+function formatIssuePath(issue: z.core.$ZodIssue): string {
+  return issue.path.length > 0 ? issue.path.map(String).join('.') : '<root>'
+}
+
+function formatValidationIssues(error: z.ZodError): string {
+  return error.issues.map((issue) => `${formatIssuePath(issue)}: ${issue.message}`).join('; ')
+}
+
 function loadYamlConfig(filePath: string): z.infer<typeof YamlConfigSchema> {
   if (!existsSync(filePath)) {
     throw new Error(`Config file not found: ${filePath}`)
   }
 
   const raw = readFileSync(filePath, 'utf8')
-  const parsed = parseYaml(raw)
+  let parsed: unknown
+  try {
+    parsed = parseYaml(raw)
+  } catch (error) {
+    throw new Error(
+      `Invalid config file ${filePath}: YAML parse error: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    )
+  }
+
   const result = YamlConfigSchema.safeParse(parsed)
   if (!result.success) {
-    throw new Error(`Invalid config file: ${result.error.issues.map((i) => i.message).join('; ')}`)
+    throw new Error(`Invalid config file ${filePath}: ${formatValidationIssues(result.error)}`)
   }
   return result.data
 }
 
 let cachedRuntimeConfig: RuntimeConfig | null = null
 
-export function getRuntimeConfig(): RuntimeConfig {
-  if (cachedRuntimeConfig) {
-    return cachedRuntimeConfig
-  }
-
+function loadRuntimeConfigFromEnv(): RuntimeConfig {
   const configFileRaw = String(process.env.BLACKICE_CONFIG_FILE ?? DEFAULT_CONFIG_FILE).trim()
   const configFile = path.resolve(configFileRaw)
   const yamlConfig = loadYamlConfig(configFile)
@@ -313,7 +327,7 @@ export function getRuntimeConfig(): RuntimeConfig {
     storagePath: String(executionYaml.storagePath ?? DEFAULT_EXECUTION_STORAGE_PATH).trim(),
   }
 
-  cachedRuntimeConfig = RuntimeConfigSchema.parse({
+  const result = RuntimeConfigSchema.safeParse({
     configFile,
     server,
     readiness,
@@ -325,5 +339,22 @@ export function getRuntimeConfig(): RuntimeConfig {
     execution,
     limits,
   })
+  if (!result.success) {
+    throw new Error(`Invalid runtime config ${configFile}: ${formatValidationIssues(result.error)}`)
+  }
+
+  return result.data
+}
+
+export function validateRuntimeConfig(): RuntimeConfig {
+  return getRuntimeConfig()
+}
+
+export function getRuntimeConfig(): RuntimeConfig {
+  if (cachedRuntimeConfig) {
+    return cachedRuntimeConfig
+  }
+
+  cachedRuntimeConfig = loadRuntimeConfigFromEnv()
   return cachedRuntimeConfig
 }
