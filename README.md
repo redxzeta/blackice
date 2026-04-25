@@ -44,6 +44,8 @@ LOG_LEVEL=info \
 pnpm start
 ```
 
+Production deployment and rollback steps live in `docs/production-runbook.md`.
+
 Dev mode:
 ```bash
 pnpm run dev
