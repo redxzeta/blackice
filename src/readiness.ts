@@ -1,4 +1,5 @@
 import { getRuntimeConfig } from './config/runtimeConfig.js'
+import { checkExecutionRepositoryStorage } from './execution/repository.js'
 import { ollamaBaseURL } from './ollama.js'
 
 const runtimeConfig = getRuntimeConfig()
@@ -16,6 +17,12 @@ export type ReadinessCheckResult = {
       baseUrl: string
       latencyMs?: number
       status?: number
+      reason?: string
+    }
+    executionStorage: {
+      ok: boolean
+      storageKind: string
+      storagePath?: string
       reason?: string
     }
   }
@@ -60,11 +67,17 @@ export async function checkReadiness(): Promise<ReadinessCheckResult> {
     clearTimeout(timeout)
   }
 
+  const executionStorageCheck = await checkExecutionRepositoryStorage({
+    storageKind: runtimeConfig.execution.storageKind,
+    storagePath: runtimeConfig.execution.storagePath,
+  })
+
   return {
-    ok: ollamaCheck.ok,
+    ok: ollamaCheck.ok && executionStorageCheck.ok,
     checks: {
       app: { ok: true },
       ollama: ollamaCheck,
+      executionStorage: executionStorageCheck,
     },
     ts: new Date().toISOString(),
   }
