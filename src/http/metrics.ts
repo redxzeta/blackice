@@ -21,6 +21,9 @@ const llmRequestCounters = new Map<string, number>()
 const llmDurationSums = new Map<string, number>()
 const llmDurationCounts = new Map<string, number>()
 const llmDurationBuckets = new Map<string, number[]>()
+const preflightCounters = new Map<string, number>()
+const executionLifecycleCounters = new Map<string, number>()
+const repositoryErrorCounters = new Map<string, number>()
 
 function escapeLabelValue(value: string): string {
   return value.replaceAll('\\', '\\\\').replaceAll('"', '\\"').replaceAll('\n', '\\n')
@@ -44,6 +47,18 @@ function llmKey(model: string, status: string): string {
 
 function llmModelKey(model: string): string {
   return metricKey([model])
+}
+
+function preflightKey(outcome: 'pass' | 'fail'): string {
+  return metricKey([outcome])
+}
+
+function executionLifecycleKey(stage: string, outcome: string, reason: string): string {
+  return metricKey([stage, outcome, reason])
+}
+
+function repositoryErrorKey(operation: string, storageKind: string): string {
+  return metricKey([operation, storageKind])
 }
 
 function getHistogramBucketCounts(route: string, method: string): number[] {
@@ -88,6 +103,25 @@ function parseLlmKey(key: string): { model: string; status: string } {
 function parseLlmModelKey(key: string): { model: string } {
   const [model] = key.split('\u0000')
   return { model }
+}
+
+function parsePreflightKey(key: string): { outcome: string } {
+  const [outcome] = key.split('\u0000')
+  return { outcome }
+}
+
+function parseExecutionLifecycleKey(key: string): {
+  stage: string
+  outcome: string
+  reason: string
+} {
+  const [stage, outcome, reason] = key.split('\u0000')
+  return { stage, outcome, reason }
+}
+
+function parseRepositoryErrorKey(key: string): { operation: string; storageKind: string } {
+  const [operation, storageKind] = key.split('\u0000')
+  return { operation, storageKind }
 }
 
 export function beginHttpRequest(route: string): void {
@@ -147,6 +181,47 @@ export function recordLlmRequest(
       bucketCounts[index] += 1
     }
   }
+}
+
+export function recordPreflightResult(outcome: 'pass' | 'fail'): void {
+  const key = preflightKey(outcome)
+  preflightCounters.set(key, (preflightCounters.get(key) ?? 0) + 1)
+}
+
+export function recordExecutionLifecycle(
+  stage: 'preflight_gate' | 'signing' | 'placement' | 'refresh' | 'cancel',
+  outcome:
+    | 'allowed'
+    | 'blocked'
+    | 'success'
+    | 'failure'
+    | 'accepted'
+    | 'rejected'
+    | 'placed'
+    | 'filled'
+    | 'cancelled'
+    | 'failed',
+  reason:
+    | 'ok'
+    | 'preflight_required'
+    | 'preflight_failed'
+    | 'preflight_mismatch'
+    | 'preflight_stale'
+    | 'intent_expired'
+    | 'invalid_state'
+    | 'adapter_error'
+    | 'venue_status'
+): void {
+  const key = executionLifecycleKey(stage, outcome, reason)
+  executionLifecycleCounters.set(key, (executionLifecycleCounters.get(key) ?? 0) + 1)
+}
+
+export function recordRepositoryError(
+  operation: 'create' | 'read' | 'write' | 'readiness_check',
+  storageKind: 'memory' | 'file' | 'other'
+): void {
+  const key = repositoryErrorKey(operation, storageKind)
+  repositoryErrorCounters.set(key, (repositoryErrorCounters.get(key) ?? 0) + 1)
 }
 
 export function renderPrometheusMetrics(): string {
@@ -244,6 +319,49 @@ export function renderPrometheusMetrics(): string {
     lines.push(`llm_request_latency_seconds_count{model="${escapeLabelValue(model)}"} ${count}`)
   }
 
+  lines.push(
+    '# HELP blackice_preflight_total Total persisted preflight results by bounded outcome.',
+    '# TYPE blackice_preflight_total counter'
+  )
+
+  const sortedPreflightEntries = [...preflightCounters.entries()].sort(([a], [b]) =>
+    a.localeCompare(b)
+  )
+  for (const [key, value] of sortedPreflightEntries) {
+    const { outcome } = parsePreflightKey(key)
+    lines.push(`blackice_preflight_total{outcome="${escapeLabelValue(outcome)}"} ${value}`)
+  }
+
+  lines.push(
+    '# HELP blackice_execution_lifecycle_total Total execution lifecycle events by bounded stage, outcome, and reason.',
+    '# TYPE blackice_execution_lifecycle_total counter'
+  )
+
+  const sortedExecutionEntries = [...executionLifecycleCounters.entries()].sort(([a], [b]) =>
+    a.localeCompare(b)
+  )
+  for (const [key, value] of sortedExecutionEntries) {
+    const { stage, outcome, reason } = parseExecutionLifecycleKey(key)
+    lines.push(
+      `blackice_execution_lifecycle_total{stage="${escapeLabelValue(stage)}",outcome="${escapeLabelValue(outcome)}",reason="${escapeLabelValue(reason)}"} ${value}`
+    )
+  }
+
+  lines.push(
+    '# HELP blackice_repository_errors_total Total execution repository errors by bounded operation and storage kind.',
+    '# TYPE blackice_repository_errors_total counter'
+  )
+
+  const sortedRepositoryEntries = [...repositoryErrorCounters.entries()].sort(([a], [b]) =>
+    a.localeCompare(b)
+  )
+  for (const [key, value] of sortedRepositoryEntries) {
+    const { operation, storageKind } = parseRepositoryErrorKey(key)
+    lines.push(
+      `blackice_repository_errors_total{operation="${escapeLabelValue(operation)}",storage_kind="${escapeLabelValue(storageKind)}"} ${value}`
+    )
+  }
+
   return `${lines.join('\n')}\n`
 }
 
@@ -257,4 +375,7 @@ export function resetHttpMetrics(): void {
   llmDurationSums.clear()
   llmDurationCounts.clear()
   llmDurationBuckets.clear()
+  preflightCounters.clear()
+  executionLifecycleCounters.clear()
+  repositoryErrorCounters.clear()
 }

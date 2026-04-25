@@ -1,40 +1,41 @@
 import type { Express, Request, Response } from 'express'
 import { getRuntimeConfig } from '../config/runtimeConfig.js'
-import { log } from '../log.js'
-import { sendSimpleError } from '../http/errors.js'
-import { parseBodyOrRespond } from '../http/validation.js'
-import { getRequestId } from '../http/requestLogging.js'
+import {
+  type CandidateEnrichmentAdapter,
+  type PreflightEvaluator,
+  PreflightRequestSchema,
+} from '../execution/contracts.js'
 import { PublicCandidateDiscoveryAdapter } from '../execution/discovery.js'
 import { CandidateEnrichmentPipeline } from '../execution/enrichment.js'
 import { PublicOrderbookReadAdapter } from '../execution/orderbook.js'
 import { CandidatePreflightEngine } from '../execution/preflight.js'
 import {
-  ExecutionPolicyError,
-  ExecutionService,
-  IntentNotFoundError,
-  IntentStateError,
-} from '../execution/service.js'
-import {
-  IntentActionResponseSchema,
-  IntentStatusSchema,
   ExecuteIntentRequestSchema,
   ExecuteIntentResponseSchema,
-  IntentRefreshResponseSchema,
+  IntentActionResponseSchema,
   IntentExecutionLogsResponseSchema,
-  IntentPreflightResponseSchema,
   IntentPreflightHistoryResponseSchema,
-  ListCandidatesResponseSchema,
+  IntentPreflightResponseSchema,
+  IntentRefreshResponseSchema,
+  IntentStatusSchema,
   ListCandidatesRequestSchema,
+  ListCandidatesResponseSchema,
   ListIntentsResponseSchema,
   PreflightActionResponseSchema,
   SubmitIntentRequestSchema,
   SubmitIntentResponseSchema,
 } from '../execution/schema.js'
 import {
-  PreflightRequestSchema,
-  type CandidateEnrichmentAdapter,
-  type PreflightEvaluator,
-} from '../execution/contracts.js'
+  ExecutionPolicyError,
+  ExecutionService,
+  IntentNotFoundError,
+  IntentStateError,
+} from '../execution/service.js'
+import { sendSimpleError } from '../http/errors.js'
+import { recordExecutionLifecycle } from '../http/metrics.js'
+import { getRequestId } from '../http/requestLogging.js'
+import { parseBodyOrRespond } from '../http/validation.js'
+import { log } from '../log.js'
 
 type IntentRouteOptions = {
   candidateEnrichmentAdapter?: CandidateEnrichmentAdapter
@@ -249,6 +250,7 @@ export function registerIntentRoutes(
         ? executionService.getExecutionPreflightRecord(req.params.intentId)
         : null
       if (requirePreflightExecution() && !preflightRecord) {
+        recordExecutionLifecycle('preflight_gate', 'blocked', 'preflight_required')
         res.status(422).json({
           error: 'Preflight is required before execution',
           code: 'preflight_required',
