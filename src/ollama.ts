@@ -1,11 +1,12 @@
 import { generateText, streamText } from 'ai'
 import { createOllama } from 'ollama-ai-provider-v2'
-import { buildWorkerContractPrompt, sanitizeLLMOutput } from './sanitize.js'
-import { env } from './config/env.js'
-import { getRuntimeConfig } from './config/runtimeConfig.js'
 import { getPolicyFallbackModel } from './ai/modelPolicy.js'
 import { parsePolicySignal } from './ai/policySignal.js'
+import { env } from './config/env.js'
+import { getRuntimeConfig } from './config/runtimeConfig.js'
+import { recordLlmRequest } from './http/metrics.js'
 import { log } from './log.js'
+import { buildWorkerContractPrompt, sanitizeLLMOutput } from './sanitize.js'
 
 function normalizeOllamaBaseURL(input: string): string {
   const trimmed = input.trim().replace(/\/+$/, '')
@@ -75,6 +76,18 @@ export class ModelAvailabilityCheckError extends Error {
 function resolveRequestedModel(requestedModel?: string): string {
   const trimmed = requestedModel?.trim()
   return trimmed && trimmed.length > 0 ? trimmed : configuredModel
+}
+
+function nowMs(): number {
+  return Date.now()
+}
+
+function recordLlmSuccess(modelId: string, startedAt: number): void {
+  recordLlmRequest(modelId, 'success', nowMs() - startedAt)
+}
+
+function recordLlmFailure(modelId: string, startedAt: number): void {
+  recordLlmRequest(modelId, 'failure', nowMs() - startedAt)
 }
 
 function toModelAvailabilityError(error: unknown): ModelAvailabilityCheckError {
@@ -170,20 +183,28 @@ async function generateWithModel(params: {
   }
 
   const model = resolveModel(params.modelId) as Parameters<typeof generateText>[0]['model']
-  const result = await generateText({
-    model,
-    prompt: params.prompt,
-    temperature: params.temperature,
-    maxOutputTokens: params.maxTokens,
-    headers: Object.keys(headers).length > 0 ? headers : undefined,
-  })
+  const startedAt = nowMs()
 
-  const sanitized = sanitizeLLMOutput(result.text)
-  if (!sanitized.ok) {
-    throw new Error(sanitized.error)
+  try {
+    const result = await generateText({
+      model,
+      prompt: params.prompt,
+      temperature: params.temperature,
+      maxOutputTokens: params.maxTokens,
+      headers: Object.keys(headers).length > 0 ? headers : undefined,
+    })
+
+    const sanitized = sanitizeLLMOutput(result.text)
+    if (!sanitized.ok) {
+      throw new Error(sanitized.error)
+    }
+
+    recordLlmSuccess(params.modelId, startedAt)
+    return { text: sanitized.text }
+  } catch (error: unknown) {
+    recordLlmFailure(params.modelId, startedAt)
+    throw error
   }
-
-  return { text: sanitized.text }
 }
 
 export async function runWorkerText(params: GenerateParams): Promise<{ text: string }> {
@@ -269,14 +290,35 @@ export function runWorkerTextStream(params: GenerateParams) {
     headers['X-Safety-Identifier'] = params.safetyIdentifier
   }
   const model = resolveModel(params.modelId) as Parameters<typeof streamText>[0]['model']
+  const startedAt = nowMs()
 
-  return streamText({
-    model,
-    prompt,
-    temperature: params.temperature,
-    maxOutputTokens: params.maxTokens,
-    headers: Object.keys(headers).length > 0 ? headers : undefined,
-  })
+  try {
+    const streamResult = streamText({
+      model,
+      prompt,
+      temperature: params.temperature,
+      maxOutputTokens: params.maxTokens,
+      headers: Object.keys(headers).length > 0 ? headers : undefined,
+    })
+
+    return {
+      ...streamResult,
+      fullStream: (async function* observeFullStream() {
+        try {
+          for await (const part of streamResult.fullStream) {
+            yield part
+          }
+          recordLlmSuccess(params.modelId, startedAt)
+        } catch (error: unknown) {
+          recordLlmFailure(params.modelId, startedAt)
+          throw error
+        }
+      })(),
+    }
+  } catch (error: unknown) {
+    recordLlmFailure(params.modelId, startedAt)
+    throw error
+  }
 }
 
 export { baseURL as ollamaBaseURL }

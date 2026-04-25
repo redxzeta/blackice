@@ -8,6 +8,7 @@ type CounterKey = RequestMetricKey & {
 }
 
 const HISTOGRAM_BUCKETS_MS = [5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000]
+const LLM_HISTOGRAM_BUCKETS_SECONDS = [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60]
 export const HTTP_METRICS_PENDING_ROUTE = '/__pending__'
 export const HTTP_METRICS_UNMATCHED_ROUTE = '/__unmatched__'
 
@@ -16,6 +17,10 @@ const durationSums = new Map<string, number>()
 const durationCounts = new Map<string, number>()
 const durationBuckets = new Map<string, number[]>()
 const inflightRequests = new Map<string, number>()
+const llmRequestCounters = new Map<string, number>()
+const llmDurationSums = new Map<string, number>()
+const llmDurationCounts = new Map<string, number>()
+const llmDurationBuckets = new Map<string, number[]>()
 
 function escapeLabelValue(value: string): string {
   return value.replaceAll('\\', '\\\\').replaceAll('"', '\\"').replaceAll('\n', '\\n')
@@ -33,6 +38,14 @@ function counterKey(route: string, method: string, status: string): string {
   return metricKey([route, method, status])
 }
 
+function llmKey(model: string, status: string): string {
+  return metricKey([model, status])
+}
+
+function llmModelKey(model: string): string {
+  return metricKey([model])
+}
+
 function getHistogramBucketCounts(route: string, method: string): number[] {
   const key = routeKey(route, method)
   const existing = durationBuckets.get(key)
@@ -45,6 +58,18 @@ function getHistogramBucketCounts(route: string, method: string): number[] {
   return created
 }
 
+function getLlmHistogramBucketCounts(model: string): number[] {
+  const key = llmModelKey(model)
+  const existing = llmDurationBuckets.get(key)
+  if (existing) {
+    return existing
+  }
+
+  const created = Array.from({ length: LLM_HISTOGRAM_BUCKETS_SECONDS.length }, () => 0)
+  llmDurationBuckets.set(key, created)
+  return created
+}
+
 function parseCounterKey(key: string): CounterKey {
   const [route, method, status] = key.split('\u0000')
   return { route, method, status }
@@ -53,6 +78,16 @@ function parseCounterKey(key: string): CounterKey {
 function parseRouteKey(key: string): RequestMetricKey {
   const [route, method] = key.split('\u0000')
   return { route, method }
+}
+
+function parseLlmKey(key: string): { model: string; status: string } {
+  const [model, status] = key.split('\u0000')
+  return { model, status }
+}
+
+function parseLlmModelKey(key: string): { model: string } {
+  const [model] = key.split('\u0000')
+  return { model }
 }
 
 export function beginHttpRequest(route: string): void {
@@ -90,6 +125,28 @@ export function endHttpRequest(route: string): void {
     return
   }
   inflightRequests.set(route, current - 1)
+}
+
+export function recordLlmRequest(
+  model: string,
+  status: 'success' | 'failure',
+  latencyMs: number
+): void {
+  const normalizedModel = model.trim() || '<unknown>'
+  const latencySeconds = Math.max(0, latencyMs) / 1000
+  const requestKey = llmKey(normalizedModel, status)
+  llmRequestCounters.set(requestKey, (llmRequestCounters.get(requestKey) ?? 0) + 1)
+
+  const modelMetricKey = llmModelKey(normalizedModel)
+  llmDurationSums.set(modelMetricKey, (llmDurationSums.get(modelMetricKey) ?? 0) + latencySeconds)
+  llmDurationCounts.set(modelMetricKey, (llmDurationCounts.get(modelMetricKey) ?? 0) + 1)
+
+  const bucketCounts = getLlmHistogramBucketCounts(normalizedModel)
+  for (const [index, bucket] of LLM_HISTOGRAM_BUCKETS_SECONDS.entries()) {
+    if (latencySeconds <= bucket) {
+      bucketCounts[index] += 1
+    }
+  }
 }
 
 export function renderPrometheusMetrics(): string {
@@ -147,6 +204,46 @@ export function renderPrometheusMetrics(): string {
     )
   }
 
+  lines.push(
+    '# HELP llm_request_total Total LLM requests by model and status.',
+    '# TYPE llm_request_total counter'
+  )
+
+  const sortedLlmCounterEntries = [...llmRequestCounters.entries()].sort(([a], [b]) =>
+    a.localeCompare(b)
+  )
+  for (const [key, value] of sortedLlmCounterEntries) {
+    const { model, status } = parseLlmKey(key)
+    lines.push(
+      `llm_request_total{model="${escapeLabelValue(model)}",status="${escapeLabelValue(status)}"} ${value}`
+    )
+  }
+
+  lines.push(
+    '# HELP llm_request_latency_seconds LLM request latency histogram in seconds.',
+    '# TYPE llm_request_latency_seconds histogram'
+  )
+
+  const sortedLlmDurationEntries = [...llmDurationCounts.entries()].sort(([a], [b]) =>
+    a.localeCompare(b)
+  )
+  for (const [key, count] of sortedLlmDurationEntries) {
+    const { model } = parseLlmModelKey(key)
+    const bucketCounts = getLlmHistogramBucketCounts(model)
+    for (const [index, bucket] of LLM_HISTOGRAM_BUCKETS_SECONDS.entries()) {
+      lines.push(
+        `llm_request_latency_seconds_bucket{model="${escapeLabelValue(model)}",le="${bucket}"} ${bucketCounts[index]}`
+      )
+    }
+    lines.push(
+      `llm_request_latency_seconds_bucket{model="${escapeLabelValue(model)}",le="+Inf"} ${count}`
+    )
+    lines.push(
+      `llm_request_latency_seconds_sum{model="${escapeLabelValue(model)}"} ${(llmDurationSums.get(key) ?? 0).toFixed(6)}`
+    )
+    lines.push(`llm_request_latency_seconds_count{model="${escapeLabelValue(model)}"} ${count}`)
+  }
+
   return `${lines.join('\n')}\n`
 }
 
@@ -156,4 +253,8 @@ export function resetHttpMetrics(): void {
   durationCounts.clear()
   durationBuckets.clear()
   inflightRequests.clear()
+  llmRequestCounters.clear()
+  llmDurationSums.clear()
+  llmDurationCounts.clear()
+  llmDurationBuckets.clear()
 }
