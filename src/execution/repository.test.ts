@@ -1,10 +1,15 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { IntentRecord } from './schema.js'
 import type { ExecutionLogRecord, PreflightRecord } from './contracts.js'
-import { FileExecutionRepository, InMemoryExecutionRepository } from './repository.js'
+import {
+  FileExecutionRepository,
+  InMemoryExecutionRepository,
+  checkExecutionRepositoryStorage,
+  createExecutionRepository,
+} from './repository.js'
+import type { IntentRecord } from './schema.js'
 
 const tempDirs: string[] = []
 
@@ -148,5 +153,45 @@ describe('execution repositories', () => {
     expect(persisted.idempotencyKeys[intent.idempotencyKey]).toBe(intent.intentId)
     expect(persisted.preflightRecords).toHaveLength(1)
     expect(persisted.executionLogs).toHaveLength(1)
+  })
+
+  it('checks storage parent availability before repository creation', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'blackice-exec-repo-'))
+    tempDirs.push(dir)
+    const missingParentPath = path.join(dir, 'missing-parent', 'execution-state.json')
+
+    await expect(
+      checkExecutionRepositoryStorage({
+        storageKind: 'file',
+        storagePath: missingParentPath,
+      })
+    ).resolves.toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('execution storage parent'),
+    })
+    expect(() =>
+      createExecutionRepository({
+        storageKind: 'file',
+        storagePath: missingParentPath,
+      })
+    ).toThrow(/execution storage parent/)
+  })
+
+  it('reports corrupted storage state before use', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'blackice-exec-repo-'))
+    tempDirs.push(dir)
+    mkdirSync(dir, { recursive: true })
+    const storagePath = path.join(dir, 'execution-state.json')
+    writeFileSync(storagePath, '{not-valid-json', 'utf8')
+
+    await expect(
+      checkExecutionRepositoryStorage({
+        storageKind: 'file',
+        storagePath,
+      })
+    ).resolves.toMatchObject({
+      ok: false,
+      reason: expect.stringContaining('execution storage state is unreadable'),
+    })
   })
 })

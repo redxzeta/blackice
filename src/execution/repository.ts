@@ -1,10 +1,11 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { constants, accessSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { access } from 'node:fs/promises'
 import path from 'node:path'
 import {
-  PreflightRecordSchema,
   type ExecutionLogRecord,
   type ExecutionRepository,
   type PreflightRecord,
+  PreflightRecordSchema,
 } from './contracts.js'
 import type { IntentRecord, IntentStatus } from './schema.js'
 import { AuditEventSchema, IntentRecordSchema } from './schema.js'
@@ -21,6 +22,13 @@ const EMPTY_STATE: StoredExecutionState = {
   idempotencyKeys: {},
   preflightRecords: [],
   executionLogs: [],
+}
+
+export type ExecutionRepositoryStorageCheck = {
+  ok: boolean
+  storageKind: string
+  storagePath?: string
+  reason?: string
 }
 
 function cloneIntent(intent: IntentRecord): IntentRecord {
@@ -220,7 +228,106 @@ export function createExecutionRepository(options: {
     throw new Error(`execution.storagePath is required for storageKind=${options.storageKind}`)
   }
 
+  const storageCheck = checkExecutionRepositoryStorageSync(options)
+  if (!storageCheck.ok) {
+    throw new Error(storageCheck.reason ?? 'execution repository storage is unavailable')
+  }
+
   return new FileExecutionRepository(options.storagePath)
+}
+
+export async function checkExecutionRepositoryStorage(options: {
+  storageKind: string
+  storagePath?: string
+}): Promise<ExecutionRepositoryStorageCheck> {
+  if (options.storageKind === 'memory') {
+    return { ok: true, storageKind: options.storageKind }
+  }
+
+  if (!options.storagePath) {
+    return {
+      ok: false,
+      storageKind: options.storageKind,
+      reason: `execution.storagePath is required for storageKind=${options.storageKind}`,
+    }
+  }
+
+  const storagePath = path.resolve(options.storagePath)
+  const parent = path.dirname(storagePath)
+  try {
+    await access(parent, constants.R_OK | constants.W_OK)
+  } catch {
+    return {
+      ok: false,
+      storageKind: options.storageKind,
+      storagePath,
+      reason: `execution storage parent is not readable and writable: ${parent}`,
+    }
+  }
+
+  if (!existsSync(storagePath)) {
+    return { ok: true, storageKind: options.storageKind, storagePath }
+  }
+
+  try {
+    parseState(readFileSync(storagePath, 'utf8'))
+    await access(storagePath, constants.R_OK | constants.W_OK)
+    return { ok: true, storageKind: options.storageKind, storagePath }
+  } catch (error) {
+    return {
+      ok: false,
+      storageKind: options.storageKind,
+      storagePath,
+      reason: `execution storage state is unreadable: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    }
+  }
+}
+
+function checkExecutionRepositoryStorageSync(options: {
+  storageKind: string
+  storagePath?: string
+}): ExecutionRepositoryStorageCheck {
+  if (options.storageKind === 'memory') {
+    return { ok: true, storageKind: options.storageKind }
+  }
+
+  if (!options.storagePath) {
+    return {
+      ok: false,
+      storageKind: options.storageKind,
+      reason: `execution.storagePath is required for storageKind=${options.storageKind}`,
+    }
+  }
+
+  const storagePath = path.resolve(options.storagePath)
+  const parent = path.dirname(storagePath)
+  try {
+    if (!existsSync(parent)) {
+      return {
+        ok: false,
+        storageKind: options.storageKind,
+        storagePath,
+        reason: `execution storage parent does not exist: ${parent}`,
+      }
+    }
+    accessSync(parent, constants.R_OK | constants.W_OK)
+    if (existsSync(storagePath)) {
+      accessSync(storagePath, constants.R_OK | constants.W_OK)
+      parseState(readFileSync(storagePath, 'utf8'))
+    }
+    return { ok: true, storageKind: options.storageKind, storagePath }
+  } catch (error) {
+    return {
+      ok: false,
+      storageKind: options.storageKind,
+      storagePath,
+      reason: `execution storage state is unreadable: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    }
+  }
 }
 
 function ensureRepositoryFile(filePath: string): void {
