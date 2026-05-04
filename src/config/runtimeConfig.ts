@@ -32,12 +32,15 @@ const DEFAULT_MARKET_DATA_MIN_LIQUIDITY_USD = 0
 const DEFAULT_MARKET_DATA_MIN_DEPTH_USD = 0
 const DEFAULT_MARKET_DATA_MAX_SPREAD_BPS = 500
 const DEFAULT_EXECUTION_DEFAULT_VENUE = 'paper'
+const DEFAULT_EXECUTION_ACCOUNT_ID = 'paper-account'
 const DEFAULT_EXECUTION_MAX_POSITION_USD = 1_000
 const DEFAULT_EXECUTION_REQUIRE_PREFLIGHT = true
 const DEFAULT_EXECUTION_PREFLIGHT_MAX_AGE_SECONDS = 300
 const DEFAULT_EXECUTION_SIGNER_KIND = 'mock'
 const DEFAULT_EXECUTION_STORAGE_KIND = 'memory'
 const DEFAULT_EXECUTION_STORAGE_PATH = ''
+const DEFAULT_EXECUTION_GEOFENCE_ALLOWED = true
+const DEFAULT_EXECUTION_COMPLIANCE_ALLOWED = true
 const PRODUCTION_RUNTIME_ENV = 'production'
 const SAFE_PRODUCTION_AUTH_EXEMPT_PATHS = new Set(['/healthz', '/readyz', '/version'])
 
@@ -105,6 +108,7 @@ const YamlConfigSchema = z
       .optional(),
     execution: z
       .object({
+        accountId: z.string().trim().min(1).optional(),
         defaultVenue: z.string().trim().min(1).optional(),
         allowedVenues: z.array(z.string().trim().min(1)).optional(),
         requirePreflight: z.boolean().optional(),
@@ -113,6 +117,8 @@ const YamlConfigSchema = z
         signerKind: z.string().trim().min(1).optional(),
         storageKind: z.string().trim().min(1).optional(),
         storagePath: z.string().trim().optional(),
+        geofenceAllowed: z.boolean().optional(),
+        complianceAllowed: z.boolean().optional(),
       })
       .optional(),
     limits: z
@@ -173,6 +179,7 @@ const RuntimeConfigSchema = z
       excludedEventTypes: z.array(z.string().min(1)),
     }),
     execution: z.object({
+      accountId: z.string().min(1),
       defaultVenue: z.string().min(1),
       allowedVenues: z.array(z.string().min(1)).min(1),
       requirePreflight: z.boolean(),
@@ -181,6 +188,8 @@ const RuntimeConfigSchema = z
       signerKind: z.string().min(1),
       storageKind: z.string().min(1),
       storagePath: z.string(),
+      geofenceAllowed: z.boolean(),
+      complianceAllowed: z.boolean(),
     }),
     limits: z.object({
       logCollectionTimeoutMs: z.number().int().positive(),
@@ -216,6 +225,21 @@ function parseAuthExemptPaths(value: string | undefined): string[] {
     .split(',')
     .map(normalizeExemptPath)
     .filter(Boolean)
+}
+
+function parseBooleanEnv(value: string | undefined): boolean | undefined {
+  if (value === undefined) {
+    return undefined
+  }
+
+  const normalized = value.trim().toLowerCase()
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) {
+    return true
+  }
+  if (['0', 'false', 'no', 'off'].includes(normalized)) {
+    return false
+  }
+  return undefined
 }
 
 function isProductionRuntime(): boolean {
@@ -387,6 +411,11 @@ function loadRuntimeConfigFromEnv(): RuntimeConfig {
   const defaultVenue = String(executionYaml.defaultVenue ?? DEFAULT_EXECUTION_DEFAULT_VENUE).trim()
 
   const execution = {
+    accountId: String(
+      executionYaml.accountId ??
+        process.env.BLACKICE_EXECUTION_ACCOUNT_ID ??
+        DEFAULT_EXECUTION_ACCOUNT_ID
+    ).trim(),
     defaultVenue,
     allowedVenues: executionYaml.allowedVenues?.map((venue) => venue.trim()).filter(Boolean) ?? [
       defaultVenue,
@@ -398,6 +427,14 @@ function loadRuntimeConfigFromEnv(): RuntimeConfig {
     signerKind: String(executionYaml.signerKind ?? DEFAULT_EXECUTION_SIGNER_KIND).trim(),
     storageKind: String(executionYaml.storageKind ?? DEFAULT_EXECUTION_STORAGE_KIND).trim(),
     storagePath: String(executionYaml.storagePath ?? DEFAULT_EXECUTION_STORAGE_PATH).trim(),
+    geofenceAllowed:
+      executionYaml.geofenceAllowed ??
+      parseBooleanEnv(process.env.BLACKICE_EXECUTION_GEOFENCE_ALLOWED) ??
+      DEFAULT_EXECUTION_GEOFENCE_ALLOWED,
+    complianceAllowed:
+      executionYaml.complianceAllowed ??
+      parseBooleanEnv(process.env.BLACKICE_EXECUTION_COMPLIANCE_ALLOWED) ??
+      DEFAULT_EXECUTION_COMPLIANCE_ALLOWED,
   }
 
   const result = RuntimeConfigSchema.safeParse({

@@ -9,6 +9,7 @@ Issue [#139](https://github.com/redxzeta/blackice/issues/139) reframes BlackIce 
 - Signer and venue abstractions so custody and execution backends can be swapped without changing the route contract.
 - An append-only audit trail per intent covering submission, confirmation, signing, execution, and cancellation events.
 - Idempotent submission keyed by `idempotencyKey`.
+- An authenticated execution-readiness contract for upstream autonomous systems.
 
 This is intentionally a minimal vertical slice. Persistence is currently in memory and the default signer and venue executor are mock implementations targeting a `paper` venue. That keeps the contract concrete while leaving KMS/HSM integration, durable storage, and real venue adapters for follow-up PRs.
 
@@ -26,6 +27,26 @@ stateDiagram-v2
 ```
 
 ## API contract
+
+### `GET /v1/execution-readiness`
+
+Returns the current execution readiness gate used by upstream autonomous systems before any submit, confirm, or execute transition.
+
+```json
+{
+  "ok": true,
+  "accountId": "paper-account",
+  "venue": "paper",
+  "environment": "development",
+  "signerReady": true,
+  "credentialsReady": true,
+  "geofenceAllowed": true,
+  "complianceAllowed": true,
+  "blockReasons": []
+}
+```
+
+Blocked responses return `503` with machine-readable `blockReasons`: `account_missing`, `venue_not_allowed`, `signer_unavailable`, `credentials_unavailable`, `geofence_denied`, or `compliance_denied`. The endpoint is protected by the same bearer-token middleware as the intent routes.
 
 ### `POST /v1/intents`
 

@@ -5,6 +5,7 @@ type SmokeStepName =
   | 'version'
   | 'metrics'
   | 'model_check'
+  | 'execution_readiness'
   | 'intent_create'
   | 'intent_preflight'
   | 'intent_confirm'
@@ -260,6 +261,7 @@ export async function runProdSmoke(options: SmokeOptions = {}): Promise<SmokeRes
     ['readyz', '/readyz'],
     ['version', '/version'],
     ['model_check', '/v1/models/check'],
+    ['execution_readiness', '/v1/execution-readiness'],
   ] as const) {
     steps.push(
       await captureStep(name, async () => {

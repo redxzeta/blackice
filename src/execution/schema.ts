@@ -41,6 +41,27 @@ export const ExecutionPolicySnapshotSchema = z.object({
   maxTtlSeconds: z.number().int().positive(),
 })
 
+export const ExecutionReadinessBlockReasonSchema = z.enum([
+  'account_missing',
+  'venue_not_allowed',
+  'signer_unavailable',
+  'credentials_unavailable',
+  'geofence_denied',
+  'compliance_denied',
+])
+
+export const ExecutionReadinessResponseSchema = z.object({
+  ok: z.boolean(),
+  accountId: z.string(),
+  venue: z.string().min(1),
+  environment: z.string().min(1),
+  signerReady: z.boolean(),
+  credentialsReady: z.boolean(),
+  geofenceAllowed: z.boolean(),
+  complianceAllowed: z.boolean(),
+  blockReasons: z.array(ExecutionReadinessBlockReasonSchema),
+})
+
 export const SubmitIntentRequestSchema = z.object({
   intentId: z.string().min(1).max(120).optional(),
   idempotencyKey: z.string().min(1).max(120),
@@ -164,6 +185,8 @@ export const IntentPreflightResponseSchema = z.object({
 
 export type SubmitIntentRequest = z.input<typeof SubmitIntentRequestSchema>
 export type ExecutionPolicySnapshot = z.infer<typeof ExecutionPolicySnapshotSchema>
+export type ExecutionReadinessBlockReason = z.infer<typeof ExecutionReadinessBlockReasonSchema>
+export type ExecutionReadinessResponse = z.infer<typeof ExecutionReadinessResponseSchema>
 export type IntentRecord = z.infer<typeof IntentRecordSchema>
 export type OrderRecord = z.infer<typeof OrderRecordSchema>
 export type AuditEvent = z.infer<typeof AuditEventSchema>

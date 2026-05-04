@@ -26,6 +26,9 @@ import {
   type AuditEvent,
   AuditEventSchema,
   type ExecutionPolicySnapshot,
+  type ExecutionReadinessBlockReason,
+  type ExecutionReadinessResponse,
+  ExecutionReadinessResponseSchema,
   type IntentRecord,
   IntentRecordSchema,
   type SubmitIntentRequest,
@@ -80,14 +83,14 @@ const DEFAULT_POLICY: ExecutionPolicySnapshot = {
 export class ExecutionService {
   private readonly policy: ExecutionPolicySnapshot
   private readonly signingAdapter: SigningAdapter
-  private readonly executionAdapter: ExecutionAdapter
+  private executionAdapter: ExecutionAdapter | null
   private readonly repository: ExecutionRepository
   private readonly now: () => Date
 
   constructor(options: ExecutionServiceOptions = {}) {
     this.policy = options.policy ?? DEFAULT_POLICY
     this.signingAdapter = options.signingAdapter ?? createSigningAdapter()
-    this.executionAdapter = options.executionAdapter ?? createExecutionAdapter()
+    this.executionAdapter = options.executionAdapter ?? null
     this.repository =
       options.repository ??
       createExecutionRepository({
@@ -97,8 +100,59 @@ export class ExecutionService {
     this.now = options.now ?? (() => new Date())
   }
 
+  private getExecutionAdapter(): ExecutionAdapter {
+    this.executionAdapter ??= createExecutionAdapter()
+    return this.executionAdapter
+  }
+
   getPolicy(): ExecutionPolicySnapshot {
     return this.policy
+  }
+
+  getExecutionReadiness(): ExecutionReadinessResponse {
+    const runtimeConfig = getRuntimeConfig()
+    const executionConfig = runtimeConfig.execution
+    const accountId = executionConfig.accountId.trim()
+    const venue = executionConfig.defaultVenue.trim()
+    const signerKind = executionConfig.signerKind.trim()
+    const signerEnvReady =
+      Boolean(String(process.env.BLACKICE_EXECUTION_SIGNER_REF ?? '').trim()) &&
+      Boolean(String(process.env.BLACKICE_EXECUTION_SIGNING_SECRET ?? '').trim())
+    const signerReady = signerKind === 'mock' || (signerKind === 'backend' && signerEnvReady)
+    const credentialsReady = signerReady
+    const blockReasons: ExecutionReadinessBlockReason[] = []
+
+    if (!accountId) {
+      blockReasons.push('account_missing')
+    }
+    if (!executionConfig.allowedVenues.includes(venue)) {
+      blockReasons.push('venue_not_allowed')
+    }
+    if (!signerReady) {
+      blockReasons.push('signer_unavailable')
+    }
+    if (!credentialsReady) {
+      blockReasons.push('credentials_unavailable')
+    }
+    if (!executionConfig.geofenceAllowed) {
+      blockReasons.push('geofence_denied')
+    }
+    if (!executionConfig.complianceAllowed) {
+      blockReasons.push('compliance_denied')
+    }
+
+    return ExecutionReadinessResponseSchema.parse({
+      ok: blockReasons.length === 0,
+      accountId,
+      venue,
+      environment:
+        String(process.env.BLACKICE_RUNTIME_ENV ?? 'development').trim() || 'development',
+      signerReady,
+      credentialsReady,
+      geofenceAllowed: executionConfig.geofenceAllowed,
+      complianceAllowed: executionConfig.complianceAllowed,
+      blockReasons,
+    })
   }
 
   listIntents(status?: IntentRecord['status']): IntentRecord[] {
@@ -332,7 +386,7 @@ export class ExecutionService {
     this.appendAuditEvent(intent, 'execution_requested', requestId, {})
 
     try {
-      const executionLog = await this.executionAdapter.placeOrder(signedRequest)
+      const executionLog = await this.getExecutionAdapter().placeOrder(signedRequest)
       this.applyExecutionLog(intent, executionLog, requestId, 'append')
       return intent
     } catch (error) {
@@ -364,7 +418,7 @@ export class ExecutionService {
 
     let executionLog: ExecutionLogRecord | null
     try {
-      executionLog = await this.executionAdapter.getOrderStatus(
+      executionLog = await this.getExecutionAdapter().getOrderStatus(
         latestOrder.externalOrderId,
         requestId
       )

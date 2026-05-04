@@ -42,3 +42,17 @@ limits:
   maxLinesCap: 2000
   maxConcurrency: 5
   maxLogChars: 40000
+
+execution:
+  accountId: "prod-account"
+  defaultVenue: "paper"
+  allowedVenues:
+    - "paper"
+  requirePreflight: true
+  preflightMaxAgeSeconds: 300
+  maxPositionUsd: 1000
+  signerKind: "backend"
+  storageKind: "file"
+  storagePath: "/var/lib/blackice/execution-state.json"
+  geofenceAllowed: true
+  complianceAllowed: true
