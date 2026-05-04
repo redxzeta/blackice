@@ -26,8 +26,13 @@ This runbook is for a single operator-controlled BlackIce deployment. It assumes
 4. Verify the selected YAML has explicit durable execution storage:
    ```yaml
    execution:
+     accountId: prod-account
+     defaultVenue: paper
+     allowedVenues: [paper]
      storageKind: file
      storagePath: /var/lib/blackice/execution-state.json
+     geofenceAllowed: true
+     complianceAllowed: true
    ```
 
 5. Ensure the storage parent exists and is writable by the service user:
@@ -49,6 +54,8 @@ export METRICS_ENABLED=1
 export METRICS_EXPOSE_PATH=/metrics
 export MODEL_PREFLIGHT_ON_START=1
 export MODEL_PREFLIGHT_TIMEOUT_MS=2000
+export BLACKICE_EXECUTION_SIGNER_REF='<set-signer-ref>'
+export BLACKICE_EXECUTION_SIGNING_SECRET='<set-signing-secret>'
 ```
 
 Do not put secret values in logs, shell history, PRs, or runbook examples. Use the host secret manager or service manager environment file where available.
@@ -79,7 +86,7 @@ BLACKICE_SMOKE_VENUE=paper \
 pnpm run smoke:prod
 ```
 
-The smoke harness checks `/healthz`, `/readyz`, `/version`, `/metrics`, `/v1/models/check`, and the paper-mode intent create, preflight, confirm, execute, refresh, and history flow. It exits non-zero and prints the failed step name when a check fails.
+The smoke harness checks `/healthz`, `/readyz`, `/version`, `/metrics`, `/v1/models/check`, `/v1/execution-readiness`, and the paper-mode intent create, preflight, confirm, execute, refresh, and history flow. It exits non-zero and prints the failed step name when a check fails.
 
 Non-paper smoke tests are blocked by default. Only override this for an intentionally prepared environment:
 
@@ -93,6 +100,7 @@ Readiness:
 - `GET /healthz` proves the HTTP process is alive.
 - `GET /version` returns build/version metadata.
 - `GET /readyz` verifies Ollama model access and execution storage access; with strict readiness, failures return `503`.
+- `GET /v1/execution-readiness` verifies account, venue, signer, credential, geofence, and compliance readiness for execution callers; failures return `503` with `blockReasons`.
 
 Prometheus metrics:
 - `blackice_http_requests_total`

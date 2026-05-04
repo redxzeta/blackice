@@ -45,6 +45,18 @@ function buildPreflightResult(ok = true) {
   }
 }
 
+const tempConfigFiles: string[] = []
+
+async function writeTempConfig(contents: string): Promise<string> {
+  const filePath = path.join(
+    process.cwd(),
+    `.tmp-blackice-config-${Date.now()}-${tempConfigFiles.length}.yaml`
+  )
+  await writeFile(filePath, contents)
+  tempConfigFiles.push(filePath)
+  return filePath
+}
+
 describe('integration routes', () => {
   beforeEach(() => {
     vi.resetModules()
@@ -56,6 +68,7 @@ describe('integration routes', () => {
     vi.restoreAllMocks()
     vi.doUnmock('./logExplainer/logCollector.js')
     vi.doUnmock('./logExplainer/ollamaClient.js')
+    return Promise.all(tempConfigFiles.splice(0).map((filePath) => rm(filePath, { force: true })))
   })
 
   it('GET /healthz returns ok', async () => {
@@ -202,6 +215,106 @@ describe('integration routes', () => {
 
     expect(res.status).toBe(200)
     expect(JSON.stringify(res.body)).toContain('ok-healthcheck')
+  })
+
+  it('GET /v1/execution-readiness returns allowed readiness for mock execution', async () => {
+    const { createApp } = await import('./app.js')
+    const app = createApp(1)
+
+    const res = await request(app).get('/v1/execution-readiness')
+
+    expect(res.status).toBe(200)
+    expect(res.body).toMatchObject({
+      ok: true,
+      accountId: 'paper-account',
+      venue: 'paper',
+      environment: 'development',
+      signerReady: true,
+      credentialsReady: true,
+      geofenceAllowed: true,
+      complianceAllowed: true,
+      blockReasons: [],
+    })
+  })
+
+  it('GET /v1/execution-readiness is authenticated when API auth is enabled', async () => {
+    vi.stubEnv('API_TOKEN', 'supersecret')
+
+    const { createApp } = await import('./app.js')
+    const app = createApp(1)
+
+    const res = await request(app).get('/v1/execution-readiness')
+
+    expect(res.status).toBe(401)
+  })
+
+  it('GET /v1/execution-readiness blocks when geofence is denied', async () => {
+    const configFile = await writeTempConfig(`
+version: 1
+execution:
+  geofenceAllowed: false
+`)
+    vi.stubEnv('BLACKICE_CONFIG_FILE', configFile)
+
+    const { createApp } = await import('./app.js')
+    const app = createApp(1)
+
+    const res = await request(app).get('/v1/execution-readiness')
+
+    expect(res.status).toBe(503)
+    expect(res.body).toMatchObject({
+      ok: false,
+      geofenceAllowed: false,
+      complianceAllowed: true,
+    })
+    expect(res.body.blockReasons).toContain('geofence_denied')
+  })
+
+  it('GET /v1/execution-readiness blocks when backend signer credentials are missing', async () => {
+    const configFile = await writeTempConfig(`
+version: 1
+execution:
+  signerKind: backend
+`)
+    vi.stubEnv('BLACKICE_CONFIG_FILE', configFile)
+
+    const { createApp } = await import('./app.js')
+    const app = createApp(1)
+
+    const res = await request(app).get('/v1/execution-readiness')
+
+    expect(res.status).toBe(503)
+    expect(res.body).toMatchObject({
+      ok: false,
+      signerReady: false,
+      credentialsReady: false,
+    })
+    expect(res.body.blockReasons).toEqual(
+      expect.arrayContaining(['signer_unavailable', 'credentials_unavailable'])
+    )
+  })
+
+  it('GET /v1/execution-readiness blocks when default venue is not allowed', async () => {
+    const configFile = await writeTempConfig(`
+version: 1
+execution:
+  defaultVenue: live
+  allowedVenues:
+    - paper
+`)
+    vi.stubEnv('BLACKICE_CONFIG_FILE', configFile)
+
+    const { createApp } = await import('./app.js')
+    const app = createApp(1)
+
+    const res = await request(app).get('/v1/execution-readiness')
+
+    expect(res.status).toBe(503)
+    expect(res.body).toMatchObject({
+      ok: false,
+      venue: 'live',
+    })
+    expect(res.body.blockReasons).toContain('venue_not_allowed')
   })
 
   it('POST /v1/chat/completions supports action happy path', async () => {

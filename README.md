@@ -97,6 +97,7 @@ Use `config/blackice.local.yaml` for local development, selected via `BLACKICE_C
 - `GET /analyze/logs/status`
 - `GET /analyze/logs/metadata`
 - `POST /v1/policy/dry-run`
+- `GET /v1/execution-readiness`
 - `POST /v1/intents`
 - `POST /v1/intents/:intentId/confirm`
 - `POST /v1/intents/:intentId/execute`
@@ -158,6 +159,9 @@ Top level environment variables:
 - `STREAM_SUPPRESS_TOOLISH` (`1` to suppress tool call like SSE payloads; default preserves raw output)
 - `MODEL_PREFLIGHT_ON_START` (`1` to fail startup when the configured Ollama model is missing; default `0`)
 - `MODEL_PREFLIGHT_TIMEOUT_MS` (default `2000`; timeout in ms for `/v1/models/check` and startup preflight, clamped to `200..10000`)
+- `BLACKICE_EXECUTION_ACCOUNT_ID` (optional fallback for `execution.accountId`)
+- `BLACKICE_EXECUTION_GEOFENCE_ALLOWED` (optional boolean fallback for `execution.geofenceAllowed`)
+- `BLACKICE_EXECUTION_COMPLIANCE_ALLOWED` (optional boolean fallback for `execution.complianceAllowed`)
 - `BUILD_GIT_SHA` (optional; exposed by `GET /version`)
 - `BUILD_TIME` (optional ISO timestamp; exposed by `GET /version`)
 
@@ -197,6 +201,17 @@ Runtime config YAML keys and current defaults:
 - `loki.maxLinesCap` (defaults to `limits.maxLinesCap`, so `2000` unless overridden)
 - `loki.maxResponseBytes` (defaults to `limits.maxCommandBytes`, so `2000000` unless overridden)
 - `loki.requireScopeLabels` (default `true`; requires `host` or `unit` in query mode unless `allowUnscoped=true`)
+- `execution.accountId` (default `paper-account`)
+- `execution.defaultVenue` (default `paper`)
+- `execution.allowedVenues` (defaults to the configured `execution.defaultVenue`)
+- `execution.requirePreflight` (default `true`)
+- `execution.preflightMaxAgeSeconds` (default `300`)
+- `execution.maxPositionUsd` (default `1000`)
+- `execution.signerKind` (default `mock`; use `backend` with `BLACKICE_EXECUTION_SIGNER_REF` and `BLACKICE_EXECUTION_SIGNING_SECRET`)
+- `execution.storageKind` (default `memory`; production requires durable storage)
+- `execution.storagePath` (default empty; production requires a path)
+- `execution.geofenceAllowed` (default `true`; `GET /v1/execution-readiness` fails closed when false)
+- `execution.complianceAllowed` (default `true`; `GET /v1/execution-readiness` fails closed when false)
 
 Loki rules YAML format:
 ```yaml

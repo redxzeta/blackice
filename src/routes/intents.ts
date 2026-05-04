@@ -12,6 +12,7 @@ import { CandidatePreflightEngine } from '../execution/preflight.js'
 import {
   ExecuteIntentRequestSchema,
   ExecuteIntentResponseSchema,
+  ExecutionReadinessResponseSchema,
   IntentActionResponseSchema,
   IntentExecutionLogsResponseSchema,
   IntentPreflightHistoryResponseSchema,
@@ -54,6 +55,15 @@ export function registerIntentRoutes(
       orderbookAdapter: new PublicOrderbookReadAdapter(),
     })
   const preflightEvaluator = options.preflightEvaluator ?? new CandidatePreflightEngine()
+
+  app.get('/v1/execution-readiness', (_req: Request, res: Response) => {
+    try {
+      const readiness = executionService.getExecutionReadiness()
+      res.status(readiness.ok ? 200 : 503).json(ExecutionReadinessResponseSchema.parse(readiness))
+    } catch (error) {
+      respondExecutionError(res, error)
+    }
+  })
 
   app.get('/v1/candidates', async (req: Request, res: Response) => {
     const parsed = ListCandidatesRequestSchema.safeParse({

@@ -42,3 +42,17 @@ limits:
   maxLinesCap: 2000
   maxConcurrency: 5
   maxLogChars: 40000
+
+execution:
+  accountId: "paper-account"
+  defaultVenue: "paper"
+  allowedVenues:
+    - "paper"
+  requirePreflight: true
+  preflightMaxAgeSeconds: 300
+  maxPositionUsd: 1000
+  signerKind: "mock"
+  storageKind: "memory"
+  storagePath: ""
+  geofenceAllowed: true
+  complianceAllowed: true
